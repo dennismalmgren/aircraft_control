@@ -1,0 +1,3 @@
+[submodule "modules/JSBSim"]
+	path = py_modules/JSBSim
+	url = https://github.com/JSBSim-Team/jsbsim.git
