@@ -224,7 +224,7 @@ def main(cfg: DictConfig):
         clip_epsilon=cfg.ppo.clip_epsilon,
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
-        normalize_advantage= True
+        normalize_advantage= False
     )
     
     adv_module = GAE(
