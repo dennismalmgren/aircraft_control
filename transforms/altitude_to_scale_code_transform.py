@@ -43,24 +43,21 @@ class AltitudeToScaleCode(Transform):
     """
 
     def __init__(
-        self, in_keys, out_keys
+        self, in_keys, out_keys, in_keys_inv, out_keys_inv
     ):
         in_keys_inv = []
         out_keys_inv = copy.copy(in_keys_inv)
         super().__init__(in_keys, out_keys, in_keys_inv, out_keys_inv)
-        if len(self.in_keys) != 1:
+        if len(self.in_keys) != len(self.out_keys):
             raise ValueError(
-                f"The number of in_keys ({len(self.in_keys)}) should be 3."
+                f"The number of in_keys ({len(self.in_keys)}) should be the number of out_keys ({len(self.in_keys)})."
             )
-        if len(self.out_keys) != 1:
-            raise ValueError(
-                f"The number of out_keys ({len(self.out_keys)}) should be 1."
-            )
-
+        
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
-        altitude = tensordict[self.in_keys[0]]
-        scale_code = _multi_scale_sinusoidal_encoding(altitude, altitude.device, N = 17)
-        tensordict[self.out_keys[0]] = scale_code
+        for in_key, out_key in zip(self.in_keys, self.out_keys):
+            value = tensordict[in_key]
+            scale_code = _multi_scale_sinusoidal_encoding(value, value.device, N = 17)
+            tensordict[out_key] = scale_code
         return tensordict
 
     forward = _call
