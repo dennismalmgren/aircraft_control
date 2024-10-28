@@ -7,11 +7,9 @@ import hydra
 from omegaconf import DictConfig
 import numpy as np
 import torch
-from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
 from torchrl.envs.utils import step_mdp
 from torchrl.record.loggers import generate_exp_name, get_logger
 from torchrl.data.tensor_specs import TensorSpec, Composite
-from jsbsim_interface import AircraftSimulatorConfig, AircraftJSBSimSimulator, AircraftJSBSimInitialConditions
 from torchrl.envs.transforms import (
     CatFrames,
     CatTensors,
@@ -23,6 +21,7 @@ from torchrl.envs.transforms import (
     InitTracker,
     StepCounter,
     RewardSum,
+    RewardScaling
 
 )
 from torchrl.envs import (
@@ -41,6 +40,11 @@ from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.data import LazyMemmapStorage, TensorDictReplayBuffer
 from torchrl.objectives.value.advantages import GAE
 from tensordict import TensorDict
+
+from jsbsim_interface import AircraftSimulatorConfig, AircraftJSBSimSimulator, AircraftJSBSimInitialConditions
+from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
+from transforms.euler_to_rotation_transform import EulerToRotation
+from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -79,7 +83,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Tanh,
         out_features=num_outputs,  # predict only loc
-        num_cells=[256, 256],
+        num_cells=[256, 256, 256],
         #norm_class=torch.nn.LayerNorm,
         #norm_kwargs=[{"elementwise_affine": False,
         #             "normalized_shape": hidden_size} for hidden_size in cfg.network.policy_hidden_sizes],
@@ -116,7 +120,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Tanh,
         out_features=1,  # predict only loc
-        num_cells=[256, 256],
+        num_cells=[256, 256, 256],
     )
 
     for layer in value_net.modules():
@@ -129,6 +133,8 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         in_keys=["observation_vector"],
     )
     
+    policy_module = policy_module.to(device)
+    value_module = value_module.to(device)
     return policy_module, value_module
 
 def make_raw_environment():
@@ -140,11 +146,20 @@ def apply_env_transforms(env):
         Compose(
             InitTracker(),
             StepCounter(max_steps=2000),
-            CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
-                                "pdot", "qdot", "rdot", "lat", "lon", "alt", "air_density", "speed_of_sound", 
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "airspeed", "groundspeed"]),
+            #RewardScaling(loc=0.0, scale=0.001, in_keys=["alt"]),
+#            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
+            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
+            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
+            #CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
+            #                    "pdot", "qdot", "rdot", "lat", "lon", "alt", "air_density", "speed_of_sound", 
+            #                    "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
+            #                        out_key="observation_vector", del_keys=False),
+            CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "rotation", "p", "q", "r", 
+                                "pdot", "qdot", "rdot", "lat", "lon", "alt_code", "air_density", "speed_of_sound", 
                                 "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
-                                    out_key="observation_vector", del_keys=False),
-            VecNorm(in_keys=["observation_vector"], decay=0.99999, eps=1e-2),
+                                    out_key="observation_vector", del_keys=False),                                    
+            
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
             RewardSum()
         )

@@ -6,3 +6,5 @@ hydra-submitit-launcher
 wandb
 pettingzoo
 jsbsim==1.2.1
+scipy
+matplotlib

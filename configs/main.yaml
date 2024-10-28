@@ -5,38 +5,38 @@ hydra:
 random:
   seed: 1234
 
-device: cpu
+device: cuda:0
 
 
 # Logger
 logger:
   backend: wandb
   mode: online
-  exp_name: aircraft_control_baseline
+  exp_name: aircraft_control_rot_no_norm
   project: aircraft_control
   test_interval: 100_000
   num_test_episodes: 5
 
 # collector
 collector:
-  total_frames: 200_000
-  frames_per_batch: 20000 #max_episode_steps * env_per_collector
+  total_frames: 40_000_000
+  frames_per_batch: 40_000 #max_episode_steps * env_per_collector
   device: cpu
-  env_per_collector: 10
+  env_per_collector: 20
 
 ppo:
   gae_lambda: 0.95
   gamma: 0.99
   clip_epsilon: 0.2
   entropy_coef: 0.0
-  epochs: 20
+  epochs: 5
   loss_critic_type: l2
 
 optim:
   lr_policy: 3.0e-4
   lr_value: 3.0e-3
   weight_decay: 0.0
-  mini_batch_size: 2000
+  mini_batch_size: 8000
   max_grad_norm: 10.0
   anneal_lr: false
   anneal_clip_epsilon: false
