@@ -173,11 +173,11 @@ class JSBSimControlEnv(EnvBase):
             aircraft_ic = AircraftJSBSimInitialConditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
+        self._target_altitude = simulator_state.position_h_sl_m + 100 #climb a little
         self._add_observations(simulator_state, td_out)
         self._add_last_action(primer_action, td_out)
         self._add_done_flags(simulator_state, td_out)
 
-        self._target_altitude = simulator_state.position_h_sl_m
         return td_out
     
     def _set_seed(self, seed: Optional[int]):

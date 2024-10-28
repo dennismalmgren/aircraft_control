@@ -72,7 +72,8 @@ class AltitudeToScaleCode(Transform):
         return tensordict
 
     def transform_output_spec(self, output_spec: Composite) -> Composite:
-        output_spec["full_observation_spec"][self.out_keys[0]] = Unbounded(shape=(*output_spec.shape, 17), device=output_spec.device, dtype=torch.float32)        
+        for out_key in self.out_keys:
+            output_spec["full_observation_spec"][out_key] = Unbounded(shape=(*output_spec.shape, 17), device=output_spec.device, dtype=torch.float32)        
         return output_spec
 
     def transform_input_spec(self, input_spec: Composite) -> Composite:

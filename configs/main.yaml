@@ -12,7 +12,7 @@ device: cuda:0
 logger:
   backend: wandb
   mode: online
-  exp_name: aircraft_control_digits
+  exp_name: aircraft_control_goal
   project: aircraft_control
   test_interval: 100_000
   num_test_episodes: 5
