@@ -70,7 +70,7 @@ class JSBSimControlEnv(EnvBase):
             groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32), #groundspeed
             last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32), #last_action
             #goals
-            #goal_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), #goal_alt
+            goal_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), #goal_alt
         )
 
         #note that throttle is 0->1 in sim.
@@ -156,7 +156,7 @@ class JSBSimControlEnv(EnvBase):
         tensordict["headwind"] =  torch.tensor([simulator_state.headwind_m_sec], device=self.device)
         tensordict["airspeed"] =  torch.tensor([simulator_state.vc_m_sec], device=self.device)
         tensordict["groundspeed"] =  torch.tensor([simulator_state.vg_m_sec], device=self.device)
-        #tensordict["goal_alt"] =  torch.tensor([self._target_altitude], device=self.device)
+        tensordict["goal_alt"] =  torch.tensor([self._target_altitude], device=self.device)
         return tensordict
 
     def _add_last_action(self, action: torch.tensor, tensordict: TensorDict):
@@ -173,7 +173,7 @@ class JSBSimControlEnv(EnvBase):
             aircraft_ic = AircraftJSBSimInitialConditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
-        self._target_altitude = simulator_state.position_h_sl_m# + 100 #climb a little
+        self._target_altitude = simulator_state.position_h_sl_m + 100 #climb a little
         self._add_observations(simulator_state, td_out)
         self._add_last_action(primer_action, td_out)
         self._add_done_flags(simulator_state, td_out)
