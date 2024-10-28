@@ -72,7 +72,7 @@ class AltitudeToScaleCode(Transform):
                 f"The number of in_keys ({len(self.in_keys)}) should be the number of out_keys ({len(self.in_keys)})."
             )
         self.add_cosine = add_cosine
-        self.N = 11
+        self.N = 17
 
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
         for in_key, out_key in zip(self.in_keys, self.out_keys):
@@ -82,7 +82,7 @@ class AltitudeToScaleCode(Transform):
                 scale_code_cosine = _multi_scale_cosinusoidal_encoding(value, value.device, N = self.N)
                 scale_code = torch.cat((scale_code_sine, scale_code_cosine), dim=-1)
             else:
-                scale_code = scale_code_cosine
+                scale_code = scale_code_sine
 
             tensordict[out_key] = scale_code
         return tensordict
