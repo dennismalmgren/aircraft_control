@@ -42,12 +42,13 @@ class EulerToRotation(Transform):
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
         angles = torch.cat([tensordict[angle] for angle in self.in_keys], dim=-1)
         try:
-            rotation_matrix = R.from_euler("ZYX", angles).as_matrix()
-        except:
-            rotation_matrix = torch.zeros(angles.shape[0], 3, 3)
-
-        tensordict[self.out_keys[0]] = torch.tensor(rotation_matrix.reshape((rotation_matrix.shape[0], -1)), 
+            rotation_matrix = torch.tensor(R.from_euler("ZYX", angles).as_matrix(), 
                                                     device=tensordict[self.in_keys[0]].device, dtype=torch.float32)
+        except:
+            rotation_matrix = torch.zeros(angles.shape[0], 3, 3, 
+                                                    device=tensordict[self.in_keys[0]].device, dtype=torch.float32)
+
+        tensordict[self.out_keys[0]] = rotation_matrix.reshape((rotation_matrix.shape[0], -1))
         return tensordict
 
     forward = _call

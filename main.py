@@ -77,6 +77,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "min": action_spec.space.low,
         "max": action_spec.space.high,
         "tanh_loc": False,
+        #'safe_tanh': False
     }
 
     policy_mlp = MLP(
@@ -150,17 +151,21 @@ def apply_env_transforms(env):
             #RewardScaling(loc=0.0, scale=0.001, in_keys=["alt"]),
 #            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            AltitudeToScaleCode(in_keys=["alt", "goal_alt"], out_keys=["alt_code", "goal_alt_code"]),
-            #AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
+            #AltitudeToScaleCode(in_keys=["alt", "goal_alt"], out_keys=["alt_code", "goal_alt_code"]),
+            AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
             #CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
             #                    "pdot", "qdot", "rdot", "lat", "lon", "alt", "air_density", "speed_of_sound", 
             #                    "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                        out_key="observation_vector", del_keys=False),
+            # CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "rotation", "p", "q", "r", 
+            #                     "pdot", "qdot", "rdot", "lat", "lon", "alt_code", "goal_alt_code", "air_density", "speed_of_sound", 
+            #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
+            #                         out_key="observation_vector", del_keys=False),                                    
+                    
             CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "rotation", "p", "q", "r", 
-                                "pdot", "qdot", "rdot", "lat", "lon", "alt_code", "goal_alt_code", "air_density", "speed_of_sound", 
+                                "pdot", "qdot", "rdot", "lat", "lon", "alt_code", "air_density", "speed_of_sound", 
                                 "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
-                                    out_key="observation_vector", del_keys=False),                                    
-            
+                                    out_key="observation_vector", del_keys=False),        
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
             RewardSum()
         )
@@ -191,6 +196,8 @@ def main(cfg: DictConfig):
         else torch.device("cpu")
     )
 
+    use_torch_compile = cfg.use_torch_compile
+
     torch.manual_seed(cfg.random.seed)
     np.random.seed(cfg.random.seed)
     random.seed(cfg.random.seed)
@@ -216,6 +223,7 @@ def main(cfg: DictConfig):
         clip_epsilon=cfg.ppo.clip_epsilon,
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
+        normalize_advantage= True
     )
     
     adv_module = GAE(
@@ -223,6 +231,12 @@ def main(cfg: DictConfig):
         lmbda=cfg.ppo.gae_lambda,
         value_network=value_module,
     )
+    #if use_torch_compile:
+    #    torch.set_float32_matmul_precision('high')
+    #    loss_module = torch.compile(loss_module)
+        #adv_module = torch.compile(adv_module)
+        #policy_module = torch.compile(policy_module)
+        #value_module = torch.compile(value_module)
 
     actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
@@ -247,6 +261,7 @@ def main(cfg: DictConfig):
         sampler=sampler,
         batch_size=cfg.optim.mini_batch_size,
     )
+    
     
     reward_keys = ["reward"]
     cfg_loss_ppo_epochs = cfg.ppo.epochs
@@ -302,8 +317,8 @@ def main(cfg: DictConfig):
 
             with torch.no_grad():
                 data = adv_module(data)
-            data_reshape = data.reshape(-1)
-            data_buffer.extend(data_reshape)
+            data_extend = data.reshape(-1)
+            data_buffer.extend(data_extend)
             for k, batch in enumerate(data_buffer):
                 # Get a data batch
                 batch = batch.to(device)
@@ -315,12 +330,12 @@ def main(cfg: DictConfig):
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
 
                 actor_optim.zero_grad()
-                critic_optim.zero_grad()
                 actor_loss.backward()
-                critic_loss.backward()
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy_module.parameters(), cfg_max_grad_norm)
-                critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
                 actor_optim.step()
+                critic_optim.zero_grad()
+                critic_loss.backward()
+                critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
                 critic_optim.step()
                 norms[j, k] = TensorDict({
                     "actor_grad_norm": actor_grad_norm,
