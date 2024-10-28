@@ -43,7 +43,7 @@ class AltitudeToScaleCode(Transform):
     """
 
     def __init__(
-        self, in_keys, out_keys, in_keys_inv, out_keys_inv
+        self, in_keys, out_keys
     ):
         in_keys_inv = []
         out_keys_inv = copy.copy(in_keys_inv)
