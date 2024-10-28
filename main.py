@@ -22,7 +22,6 @@ from torchrl.envs.transforms import (
     StepCounter,
     RewardSum,
     RewardScaling
-
 )
 from torchrl.envs import (
     ParallelEnv,
@@ -45,6 +44,7 @@ from jsbsim_interface import AircraftSimulatorConfig, AircraftJSBSimSimulator, A
 from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
 from transforms.euler_to_rotation_transform import EulerToRotation
 from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
+from transforms.altitude_to_digits_transform import AltitudeToDigits
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -150,7 +150,8 @@ def apply_env_transforms(env):
             #RewardScaling(loc=0.0, scale=0.001, in_keys=["alt"]),
 #            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
+            #AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
+            AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
             #CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
             #                    "pdot", "qdot", "rdot", "lat", "lon", "alt", "air_density", "speed_of_sound", 
             #                    "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
