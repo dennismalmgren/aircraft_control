@@ -156,7 +156,7 @@ class JSBSimControlEnv(EnvBase):
         tensordict["headwind"] =  torch.tensor([simulator_state.headwind_m_sec], device=self.device)
         tensordict["airspeed"] =  torch.tensor([simulator_state.vc_m_sec], device=self.device)
         tensordict["groundspeed"] =  torch.tensor([simulator_state.vg_m_sec], device=self.device)
-        tensordict["goal_alt"] =  torch.tensor([self._target_altitude], device=self.device)
+        tensordict["goal_alt"] =  torch.tensor([simulator_state.position_h_sl_m - self._target_altitude], device=self.device)
         return tensordict
 
     def _add_last_action(self, action: torch.tensor, tensordict: TensorDict):
