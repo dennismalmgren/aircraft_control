@@ -11,7 +11,8 @@ from .models import (
     Winds,
     UnitConversions,
     FGFCS,
-    MassBalance
+    MassBalance,
+    Propulsion
 )
 
 class FDMExec:
@@ -27,11 +28,11 @@ class FDMExec:
         self.propagate = Propagate(self.inertial, self.device, self.batch_size)
         #self.input
         self.atmosphere = StandardAtmosphere(self.device, self.batch_size)
-        self.winds = Winds(self.device, self.batch_size)
+        self.winds = Winds(device = self.device, batch_size = self.batch_size)
         self.fgfcs = FGFCS(self.device, self.batch_size)
         self.mass_balance = MassBalance(self.propagate, device=self.device, batch_size=self.batch_size)
         self.auxiliary = Auxiliary(self.device, self.batch_size)
-        self.propulsion = Propulsion(self.device, self.batch_size) #todo:
+        self.propulsion = Propulsion(device = self.device, batch_size = self.batch_size) #todo:
         #self.aerodynamics
         #self.ground_reactions
         #self.external_reactions
@@ -66,6 +67,7 @@ class FDMExec:
         self.atmosphere._in.altitudeASL = self.propagate.get_altitude_ASL()
         self.atmosphere._in.geod_latitude_deg = self.propagate.get_geod_latitude_deg()
         self.atmosphere._in.longitude_deg = self.propagate.get_longitude_deg()
+        #self.atmosphere.init_model()
         #winds
         self.winds._in.AltitudeASL = self.propagate.get_altitude_ASL()
         self.winds._in.DistanceAGL = self.propagate.get_distance_AGL()
@@ -73,12 +75,22 @@ class FDMExec:
         self.winds._in.Tw2b = self.auxiliary.get_Tw2b()
         self.winds._in.V = self.auxiliary.get_Vt()
         self.winds._in.totalDeltaT = self.dT * self.winds.get_rate()
+        self.winds.init_model()
         #fgfcs
         # Dynamic inputs come into the components that FCS manages through properties
+        #propulsion
+        self.propulsion._in.Pressure = self.atmosphere.get_pressure()
+        self.propulsion._in.PressureRatio = self.atmosphere.get_pressure_ratio()
+        self.propulsion._in.Temperature = self.atmosphere.get_temperature()
+        self.propulsion._in.DensityRatio = self.atmosphere.get_density_ratio()
+        #self.propulsion._in.Density = self.atmosphere.get_density()
+        #self.propulsion._in.Soundspeed = self.atmosphere.get_soundspeed()
+#  Propulsion->in.Pressure         = Atmosphere->GetPressure();
+#     Propulsion->in.PressureRatio    = Atmosphere->GetPressureRatio();
+#     Propulsion->in.Temperature      = Atmosphere->GetTemperature();
+#     Propulsion->in.DensityRatio     = Atmosphere->GetDensityRatio();
+#     Propulsion->in.Density          = Atmosphere->GetDensity();
+#     Propulsion->in.Soundspeed       = Atmosphere->GetSoundSpeed();
 
-        # for model in self.models:
-        #     #skip input/outputs
-        #     self.load_inputs(model)
-        #     model.initialize()
         
             

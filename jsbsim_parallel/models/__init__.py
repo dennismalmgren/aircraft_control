@@ -7,3 +7,4 @@ from .standard_atmosphere import StandardAtmosphere
 from .atmosphere.winds import Winds
 from .fgfcs import FGFCS
 from .mass_balance import MassBalance
+from .propulsion import Propulsion

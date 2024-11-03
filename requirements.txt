@@ -8,3 +8,4 @@ pettingzoo
 jsbsim==1.2.1
 scipy
 matplotlib
+pytest

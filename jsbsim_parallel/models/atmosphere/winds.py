@@ -33,7 +33,7 @@ class WindsInputs:
         self.totalDeltaT = torch.zeros(*size, 1, dtype=torch.float64, device=device)
 
 class Winds(ModelBase):
-    def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
+    def __init__(self, *, device: torch.device, batch_size: Optional[torch.Size] = None):
         super().__init__(device=device, batch_size=batch_size)
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.device = device
@@ -48,12 +48,12 @@ class Winds(ModelBase):
         self.psiw = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self._in = WindsInputs(device=device, batch_size=self.size)
 
-    def run(holding: bool) -> bool:
+    def run(self, holding: bool) -> bool:
         if holding:
             return True
         
         return False
 
-    def init_model() -> bool:
+    def init_model(self) -> bool:
         #reset to IC.
         return True
