@@ -11,3 +11,5 @@ from .propulsion import Propulsion
 from .aerodynamics import Aerodynamics
 from .ground_reactions import GroundReactions
 from .external_reactions import ExternalReactions
+from .buoyant_forces import BuoyantForces
+from .gas_cell import GasCell
