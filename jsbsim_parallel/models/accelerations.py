@@ -97,10 +97,10 @@ class Accelerations:
 
         #bind...todo
 
-    def run(holding: bool) -> bool:
+    def run(self, holding: bool) -> bool:
         return True
 
-    def init_model() -> bool:
+    def init_model(self) -> bool:
         #reset to IC.
         return True
 

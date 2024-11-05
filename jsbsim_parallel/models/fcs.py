@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Union
 from enum import IntEnum
 
 import torch
@@ -12,7 +12,7 @@ class OutputForm:
     Mag = 3
     NForms = 4
 
-class FGFCS:
+class FCS:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
         #channelrate 1
         self.device = device
@@ -29,8 +29,17 @@ class FGFCS:
         self.RTrimCmd = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self.GearCmd = torch.ones(*self.size, 1, dtype=torch.float64, device=device)
         self.GearPos = torch.ones(*self.size, 1, dtype=torch.float64, device=device)
+        #vectors
+        self.ThrottleCmd = []
+        self.ThrottlePos = []
+        self.MixtureCmd = []
+        self.MixturePos = []
+        self.PropAdvanceCmd: List[torch.Tensor] = []
+        self.PropAdvance: List[torch.Tensor] = []
+        self.PropFeatherCmd: List[torch.Tensor] = []
+        self.PropFeather: List[torch.Tensor] = []
+        self.BrakePos: List[torch.Tensor] = [torch.zeros(*self.size, 1, dtype=torch.float64, device=device) for _ in range(BrakeGroup.NumBrakeGroups)]
         #brakepos resize..
-        self.BrakePos = torch.zeros(*self.size, BrakeGroup.NumBrakeGroups, dtype=torch.float64, device=device)
         self.TailhookPos = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self.WingFoldPos = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
 
@@ -43,15 +52,26 @@ class FGFCS:
         self.DsbPos = torch.zeros(*self.size, OutputForm.NForms, dtype=torch.float64, device=device)
         self.DspPos = torch.zeros(*self.size, OutputForm.NForms, dtype=torch.float64, device=device)
         
+    def GetThrottlePos(self, engine: Optional[int] = None) -> Union[List[torch.Tensor], torch.Tensor]:
+        if engine is None:
+            return self.ThrottlePos
+        else:
+            return self.ThrottlePos[engine]
 
-    def run(holding: bool) -> bool:
+    def GetBrakePos(self) -> List[torch.Tensor]:
+        return self.BrakePos
+    
+    def GetGearPos(self) -> torch.Tensor:
+        return self.GearPos
+    
+    def run(self, holding: bool) -> bool:
         if holding:
             return True
 
         return False
 
-    def init_model() -> bool:
-        
+    def init_model(self) -> bool:
+
         #reset to IC.
         return True
 

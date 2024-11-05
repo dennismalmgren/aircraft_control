@@ -24,6 +24,12 @@ class MassBalance(ModelBase):
         self.Jinv = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=device)
         self.pmJ = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=device)
 
+    def GetXYZcg(self):
+        return self.vXYZcg
+    
+    def GetEmptyWeight(self):
+        return self.empty_weight
+    
     def run(holding: bool) -> bool:
         if (holding):
             return True

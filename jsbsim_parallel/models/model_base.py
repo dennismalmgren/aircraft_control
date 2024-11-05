@@ -7,7 +7,7 @@ class ModelBase:
         size = batch_size if batch_size is not None else torch.Size([])
         self.rate = torch.ones(*size, 1, dtype=torch.float64, device=device) #todo: probably a scalar
     
-    def get_rate(self):
+    def GetRate(self):
         return self.rate
     
     def init_model(self):

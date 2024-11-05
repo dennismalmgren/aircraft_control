@@ -2,6 +2,9 @@ from typing import Optional
 
 import torch
 
+from jsbsim_parallel.models.standard_atmosphere import StandardAtmosphere
+from jsbsim_parallel.models.unit_conversions import UnitConversions
+
 class AuxiliaryInputs:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
         # Use batch_size for initialization if provided, else default to a single instance.
@@ -79,25 +82,89 @@ class AuxiliaryInputs:
         self.TotalWindNED = self.TotalWindNED.to(device)
         self.TurbPQR = self.TurbPQR.to(device)
 
+def RankineToCelsius(rankine: torch.Tensor):
+    return (rankine - 491.67)/1.8
+
 class Auxiliary:
-    def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
+    def __init__(self, atmosphere: StandardAtmosphere, device: torch.device, batch_size: Optional[torch.Size] = None):
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.device = device
         self.batch_size = batch_size
         self._in = AuxiliaryInputs(self.device, self.size)
-        self.Tw2b = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=self.device)
-        self.Vt = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
 
-    def get_Tw2b(self):
-        return self.Tw2b
+        # Scalar variables with a single element in an extra dimension
+        self.vcas = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.veas = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.pt = atmosphere.StdDaySLpressure
+        self.tat = atmosphere.StdDaySLtemperature
+        self.tatc = RankineToCelsius(self.tat)
+        self.Vt = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Vground = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Mach = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.MachU = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.qbar = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.qbarUW = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.qbarUV = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Re = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.alpha = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.beta = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.adot = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.bdot = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.psigt = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.gamma = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Nx = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Ny = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Nz = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.hoverbcg = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.hoverbmac = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+
+        # 3x3 matrices
+        self.mTw2b = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=device)
+        self.mTb2w = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=device)
+
+        # 3-element vectors
+        self.vPilotAccel = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vPilotAccelN = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vNcg = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vNwcg = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vAeroPQR = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vAeroUVW = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vEulerRates = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vMachUVW = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.vLocationVRP = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
+        self.units = UnitConversions.get_instance()
+
+    def GetTw2b(self):
+        return self.mTw2b
     
-    def get_Vt(self):
+    def GetVt(self):
         return self.Vt
     
-    def run(holding: bool) -> bool:
-        pass
+    def Getalpha(self):
+        return self.alpha
 
-    def init_model() -> bool:
+    def Getbeta(self):
+        return self.beta
+
+    def Getqbar(self):
+        return self.qbar
+
+    def GetTb2w(self):
+        return self.mTb2w
+        
+    def GetVground(self):
+        return self.Vground
+    
+    def GetVcalibratedKTS(self):
+        return self.vcas * self.units.FPS_TO_KTS
+
+    def run(self, holding: bool) -> bool:
+        if holding:
+            return False
+        
+        return True
+
+    def init_model(self) -> bool:
         #reset to IC.
         return True
 

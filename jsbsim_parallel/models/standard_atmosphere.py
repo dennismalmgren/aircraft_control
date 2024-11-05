@@ -23,9 +23,10 @@ class StandardAtmosphere:
         units = UnitConversions.get_instance()
 
         #base class constants
+        self.StdDaySLtemperature = torch.tensor(518.67, dtype=torch.float64, device=self.device)
         self.StdDaySLpressure = torch.tensor(2116.228, dtype=torch.float64, device=self.device)
         self.SHRatio = torch.tensor(1.4, dtype=torch.float64, device=device)
-
+        
         # Relative molecular mass of components in dry air
         self.Rmm = torch.tensor(28.9645, dtype=torch.float64, device=self.device)
 
@@ -42,9 +43,17 @@ class StandardAtmosphere:
         self.Rdry = self.Rstar / self.Mair
         #base class variable list
         self.Temperature = torch.tensor(1.8, dtype=torch.float64, device=self.device)
+        self.Pressure = torch.tensor(0.0, dtype=torch.float64, device=self.device)
+        self.SLpressure: torch.Tensor = torch.tensor(1.0, dtype=torch.float64, device=self.device)
+        self.Density: torch.Tensor = torch.tensor(0.0, dtype=torch.float64, device=self.device)
+        self.SLdensity: torch.Tensor = torch.tensor(1.0, dtype=torch.float64, device=self.device)
+        self.SLtemperature: torch.Tensor = torch.tensor(1.8, dtype=torch.float64, device=self.device)
+        self.SLsoundspeed: torch.Tensor = torch.tensor(1.0, dtype=torch.float64, device=self.device)
+        self.Soundspeed: torch.Tensor = torch.tensor(0.0, dtype=torch.float64, device=self.device)
+        
         # base class init
-        #StdDaySLsoundspeed(sqrt(SHRatio*Reng0*StdDaySLtemperature))
-
+        self.StdDaySLsoundspeed = torch.sqrt(self.SHRatio*self.Reng0*self.StdDaySLtemperature)
+        
         # constructor initializer list
         self.StdSLpressure = self.StdDaySLpressure.clone()
         self.TemperatureBias = torch.zeros(1, dtype=torch.float64, device=self.device)
@@ -82,23 +91,31 @@ class StandardAtmosphere:
         self.max_vapor_mass_fraction =  Table1D(N=10, 
                                                     data = max_vapor_mass_fraction_table_data,
                                                     device = self.device)
-        self.lapse_rates = torch.zeros(len(self.std_atmos_temperature_table), 
+        self.LapseRates = torch.zeros(len(self.std_atmos_temperature_table), 
                                                dtype=torch.float64, device=self.device)
         self.calculate_lapse_rates()
-        self.std_lapse_rates = self.lapse_rates.clone()
+        self.StdLapseRates = self.LapseRates.clone()
         
         self.GradientFadeoutAltitude = self.std_atmos_temperature_table[-1, 0]
         self.PressureBreakpoints = torch.zeros(len(self.std_atmos_temperature_table), 
                                                dtype=torch.float64, device=self.device)
         self.calculate_pressure_breakpoints(self.StdSLpressure)
 
-        self.Reng = self.Reng0
-        self.StdDaySLtemperature = torch.tensor(518.67, dtype=torch.float64, device=self.device)
-        self.StdDaySLsoundspeed = torch.sqrt(self.SHRatio*self.Reng0*self.StdDaySLtemperature)
+        self.StdPressureBreakpoints = self.PressureBreakpoints.clone()
+        self.StdSLtemperature = self.std_atmos_temperature_table[0, 1]
+        self.StdSLdensity = self.StdSLpressure / (self.Rdry * self.StdSLtemperature)
+        self.StdDensityBreakpoints = torch.zeros(len(self.StdPressureBreakpoints),
+                                                 dtype=torch.float64, device=self.device)
+        self.calculate_density_breakpoints()
+        self.StdSLsoundspeed = torch.sqrt(self.SHRatio*self.Rdry*self.StdSLtemperature)
+
+        # self.Reng = self.Reng0
+        # self.StdDaySLtemperature = torch.tensor(518.67, dtype=torch.float64, device=self.device)
+        # self.StdDaySLsoundspeed = torch.sqrt(self.SHRatio*self.Reng0*self.StdDaySLtemperature)
         self._in = AtmosphereInputs(device=self.device, batch_size=batch_size)
-        self.earth_radius = 6356766.0 / units.FT_TO_M
-        self.Pressure = torch.tensor(0.0, dtype=torch.float64, device=self.device)
-        self.SLPressure: torch.Tensor = torch.tensor(1.0, dtype=torch.float64, device=self.device)
+        # self.earth_radius = 6356766.0 / units.FT_TO_M
+        
+
         '''
                                GeoPot Alt    Temp       GeoPot Alt  GeoMet Alt
                                    (ft)      (deg R)        (km)        (km)
@@ -115,9 +132,12 @@ class StandardAtmosphere:
         '''
 
         
-        self.lapse_rates = torch.zeros(len(self.std_atmos_temperature_table), dtype=torch.float64, device=self.device)
+        #self.lapse_rates = torch.zeros(len(self.std_atmos_temperature_table), dtype=torch.float64, device=self.device)
         
-        
+    def calculate_density_breakpoints(self):
+        for i in range(len(self.StdPressureBreakpoints)):
+            self.StdDensityBreakpoints[i] = self.StdPressureBreakpoints[i] / (self.Rdry * self.std_atmos_temperature_table[i, 1])
+
     def calculate_pressure_breakpoints(self, sl_pressure: torch.Tensor):
         self.PressureBreakpoints[0] = sl_pressure
         for i in range(len(self.std_atmos_temperature_table) - 1):
@@ -127,8 +147,8 @@ class StandardAtmosphere:
             delta_alt = upper_alt - base_alt
             tmb = base_temp + self.TemperatureBias * (self.GradientFadeoutAltitude - base_alt) * \
                     self.TemperatureDeltaGradient                
-            if self.lapse_rates[i] != 0.0: #todo: tensor
-                lmb = self.lapse_rates[i]
+            if self.LapseRates[i] != 0.0: #todo: tensor
+                lmb = self.LapseRates[i]
                 exp = self.g0 / (self.Rdry * lmb)
                 factor = tmb / (tmb + lmb * delta_alt)
                 self.PressureBreakpoints[i + 1] = self.PressureBreakpoints[i] * torch.pow(factor, exp)
@@ -141,7 +161,7 @@ class StandardAtmosphere:
             t1 = self.std_atmos_temperature_table[base_height_index + 1, 1]
             h0 = self.std_atmos_temperature_table[base_height_index, 0]
             h1 = self.std_atmos_temperature_table[base_height_index + 1, 0]
-            self.lapse_rates[base_height_index] = (t1 - t0) / (h1 - h0) - self.TemperatureDeltaGradient
+            self.LapseRates[base_height_index] = (t1 - t0) / (h1 - h0) - self.TemperatureDeltaGradient
 
     def init_model(self) -> bool:
         #base class init_model
@@ -176,13 +196,19 @@ class StandardAtmosphere:
         return self.Pressure
     
     def get_pressure_ratio(self) -> torch.Tensor:
-        return self.Pressure / self.SLPressure
+        return self.Pressure / self.SLpressure
 
-    def get_temperature(self) -> torch.Tensor:
+    def GetTemperature(self) -> torch.Tensor:
         return self.Temperature
 
     def get_density_ratio(self) -> torch.Tensor:
-        
+        return self.Density / self.SLdensity
+    
+    def GetDensity(self) -> torch.Tensor:
+        return self.Density
+    
+    def GetSoundspeed(self) -> torch.Tensor:
+        return self.Soundspeed
     #     self.propulsion._in.DensityRatio = self.atmosphere.get_density_ratio()
     #     self.propulsion._in.Density = self.atmosphere.get_density()
     #     self.propulsion._in.Soundspeed = self.atmosphere.get_soundspeed()
