@@ -5,6 +5,7 @@ import os
 import torch
 
 
+
 from .models import (
     Inertial,
     Propagate,
@@ -27,6 +28,7 @@ from jsbsim_parallel.input_output.xml_filereader import XMLFileReader
 from jsbsim_parallel.input_output.element import Element
 
 from jsbsim_parallel.models.model_base import EulerAngles
+from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
 
 # This list of enums is very important! The order in which models are listed
 # here determines the order of execution of the models.
@@ -56,7 +58,7 @@ class ModelOrder(IntEnum):
     Output = 15
     NumStandardModels = 16
 
-class FDMExec:
+class FDMExec(ModelPathProvider):
     def __init__(self, device, batch_size: Optional[torch.Size] = None):
         self.device = device
         self.batch_size = batch_size if batch_size is not None else torch.Size([])
@@ -66,9 +68,13 @@ class FDMExec:
         self.AircraftPath = "aircraft"
         self.EnginePath = "engine"
         self.SystemsPath = "systems"
+        self.allocate()
         self.modelLoaded = False
         #TODO: instance->Tie
 
+    def GetFullAircraftPath(self):
+        return self.FullAircraftPath
+    
     def SetRootDir(self, root_dir: str):
         self.RootDir = root_dir
 
@@ -81,21 +87,52 @@ class FDMExec:
     def SetEnginePath(self, path: str):
         self.EnginePath = os.path.join(self.RootDir, path)
 
-    def LoadModel(self, model: str, addModelToPath:bool = True, batch_size: torch.Size = None):
+    def LoadModel(self, model: str, addModelToPath:bool = True, batch_size: torch.Size = None) -> bool:
         self.batch_size = batch_size
-        self.aircraftCfgFileName = os.path.join(self.AircraftPath, model, model + ".xml")
+        if addModelToPath:
+            self.FullAircraftPath = os.path.join(self.AircraftPath, model)
+        else:
+            self.FullAircraftPath = self.AircraftPath
+
+        self.aircraftCfgFileName = os.path.join(self.FullAircraftPath, model + ".xml")
         if self.modelLoaded:
             self.deallocate()
             self.allocate()
 
         reader = XMLFileReader()
-        element = reader.load_xml_document(self.aircraftCfgFileName)
-        self.ReadPrologue(element)
+        document = reader.load_xml_document(self.aircraftCfgFileName)
+        self.ReadPrologue(document)
+
+        # Process the planet element. This element is OPTIONAL.
+        element = document.FindElement("planet")
+        if element is not None:
+            # Will always be None
+            result = self.LoadPlanet(element)
+            if not result:
+                print("Invalid planet")
+                return result
+
+        # Process the metrics element. This element is REQUIRED.
+        element = document.FindElement("metrics")
+        if element is not None:
+            result = self.aircraft.Load(element)
+            if not result:
+                print("Invalid aircraft")
+                return result
+        else:
+            print("No metrics element")
+            return False
+        
         print('ok')
 
+    def LoadPlanet(self, element: Element) -> bool:
+        return True
+    
     def ReadPrologue(self, element: Element):
-        AircraftName = element.get_attribute_value("name");
-        self.aircraft.
+        AircraftName = element.GetAttributeValue("name");
+        self.aircraft.SetAircraftName(AircraftName)
+
+
     def deallocate(self):
         pass
 
@@ -104,16 +141,16 @@ class FDMExec:
         self.propagate = Propagate(self.inertial, self.device, self.batch_size)
         #self.input
         self.atmosphere = StandardAtmosphere(self.device, self.batch_size)
-        self.winds = Winds(device = self.device, batch_size = self.batch_size)
+        self.winds = Winds(self, device = self.device, batch_size = self.batch_size)
         self.systems = FCS(self.device, self.batch_size)
-        self.mass_balance = MassBalance(self.propagate, device=self.device, batch_size=self.batch_size)
+        self.mass_balance = MassBalance(self.propagate, self, device=self.device, batch_size=self.batch_size)
         self.auxiliary = Auxiliary(self.atmosphere, self.device, self.batch_size)
-        self.propulsion = Propulsion(self.mass_balance, device = self.device, batch_size = self.batch_size) 
+        self.propulsion = Propulsion(self.mass_balance, self, device = self.device, batch_size = self.batch_size) 
         self.aerodynamics = Aerodynamics(device = self.device, batch_size = self.batch_size)
-        self.ground_reactions = GroundReactions(self.device, self.batch_size)
+        self.ground_reactions = GroundReactions(self, device=self.device, batch_size=self.batch_size)
         self.external_reactions = ExternalReactions(self.device, self.batch_size)
         self.buoyant_forces = BuoyantForces(self.device, self.batch_size)
-        self.aircraft = Aircraft(self.device, self.batch_size)
+        self.aircraft = Aircraft(self, device=self.device, batch_size=self.batch_size)
         self.accelerations = Accelerations(self.device, self.batch_size)
         #self.output
         self.models: Dict[ModelOrder, Any] = {

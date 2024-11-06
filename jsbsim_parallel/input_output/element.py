@@ -24,7 +24,7 @@ class Element:
     def has_attribute(self, key: str) -> bool:
         return key in self.attributes
 
-    def get_attribute_value(self, key: str) -> str:
+    def GetAttributeValue(self, key: str) -> str:
         return self.attributes.get(key, "")
 
     def set_attribute_value(self, key: str, value: str) -> bool:
@@ -32,7 +32,7 @@ class Element:
         return True
 
     def get_attribute_value_as_number(self, key: str) -> float:
-        value = self.get_attribute_value(key)
+        value = self.GetAttributeValue(key)
         try:
             return float(value)
         except ValueError:
@@ -53,7 +53,7 @@ class Element:
         except ValueError:
             raise ValueError(f"Data line is not numeric: '{self.data_lines[0]}'")
 
-    def find_child_by_name(self, name: str) -> Optional['Element']:
+    def FindElement(self, name: str) -> Optional['Element']:
         for child in self.children:
             if child.name == name:
                 return child

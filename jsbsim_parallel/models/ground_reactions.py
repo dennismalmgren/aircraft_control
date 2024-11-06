@@ -5,10 +5,13 @@ import torch
 from jsbsim_parallel.math.lagrange_multiplier import LagrangeMultiplier
 from jsbsim_parallel.models.lgear import LGear, LGearInputs
 from jsbsim_parallel.models.model_base import ModelBase
+from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
 
 class GroundReactions(ModelBase):
-    def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
-        super().__init__(device=device, batch_size=batch_size)
+    def __init__(self, 
+                 path_provider: ModelPathProvider,
+                 *, device: torch.device, batch_size: Optional[torch.Size] = None):
+        super().__init__(path_provider, device=device, batch_size=batch_size)
         self.device = device
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.lGear: List[LGear] = [] #TODO, NO LISTS

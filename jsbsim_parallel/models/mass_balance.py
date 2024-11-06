@@ -4,6 +4,7 @@ import torch
 from jsbsim_parallel.models.propagate import Propagate 
 from jsbsim_parallel.models.model_base import ModelBase
 from jsbsim_parallel.models.unit_conversions import UnitConversions
+from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
 
 class MassBalanceInputs:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
@@ -19,8 +20,10 @@ class MassBalanceInputs:
         self.WOW = torch.zeros(*size, 1, dtype=torch.bool, device=device)
 
 class MassBalance(ModelBase):
-    def __init__(self, propagate: Propagate, *, device, batch_size: Optional[torch.Size] = None):
-        super().__init__(device=device, batch_size=batch_size)
+    def __init__(self, propagate: Propagate, 
+                                  path_provider: ModelPathProvider,
+    *, device, batch_size: Optional[torch.Size] = None):
+        super().__init__(path_provider, device=device, batch_size=batch_size)
         self.device = device
         self.size = batch_size if batch_size is not None else torch.Size([])
 

@@ -4,6 +4,7 @@ from enum import IntEnum
 import torch
 
 from jsbsim_parallel.models.model_base import ModelBase
+from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
 
 class TurbulenceType(IntEnum):
     NoTurbulence: int = 0
@@ -29,12 +30,13 @@ class WindsInputs:
         # FGMatrix33 equivalent (3x3 matrix)
         self.Tl2b = torch.zeros(*size, 3, 3, dtype=torch.float64, device=device)
         self.Tw2b = torch.zeros(*size, 3, 3, dtype=torch.float64, device=device)
-
         self.totalDeltaT = torch.zeros(*size, 1, dtype=torch.float64, device=device)
 
 class Winds(ModelBase):
-    def __init__(self, *, device: torch.device, batch_size: Optional[torch.Size] = None):
-        super().__init__(device=device, batch_size=batch_size)
+    def __init__(self, 
+                 path_provider: ModelPathProvider,
+                 *, device: torch.device, batch_size: Optional[torch.Size] = None):
+        super().__init__(path_provider, device=device, batch_size=batch_size)
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.device = device
         self._turbulence_Type = TurbulenceType.NoTurbulence

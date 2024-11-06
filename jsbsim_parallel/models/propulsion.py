@@ -8,10 +8,12 @@ from jsbsim_parallel.models.propulsion_models.engine import Engine, EngineInputs
 from jsbsim_parallel.models.model_base import ModelBase
 from jsbsim_parallel.models.mass_balance import MassBalance
 from jsbsim_parallel.models.unit_conversions import UnitConversions
+from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
 
 class Propulsion(ModelBase):
-    def __init__(self, mass_balance: MassBalance, *, device: torch.device, batch_size: Optional[torch.Size] = None):
-        super().__init__(device=device, batch_size=batch_size)
+    def __init__(self, mass_balance: MassBalance, path_provider: ModelPathProvider,
+                 *, device: torch.device, batch_size: Optional[torch.Size] = None):
+        super().__init__(path_provider, device=device, batch_size=batch_size)
         self.device = device
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.mass_balance = mass_balance
