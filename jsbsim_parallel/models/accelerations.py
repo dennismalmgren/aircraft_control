@@ -1,6 +1,7 @@
 from typing import List, Optional
 import torch
 
+from jsbsim_parallel.math.lagrange_multiplier import LagrangeMultiplier
 
 class AccelerationsInputs:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
@@ -50,7 +51,7 @@ class AccelerationsInputs:
         self.Mass = torch.zeros(*size, 1, dtype=torch.float64, device=device)
 
         # List of Lagrange multipliers set by FGLGear for friction forces calculations.
-        self.MultipliersList: List[torch.Tensor] = []
+        self.MultipliersList: List[LagrangeMultiplier] = []
 
     def to(self, device: torch.device):
         """Move all tensors to the specified device."""
@@ -104,8 +105,14 @@ class Accelerations:
         #reset to IC.
         return True
 
-    def get_pqr_idot(self):
+    def GetPQRidot(self) -> torch.Tensor:
         return self.vPQRidot
 
-    def get_uvw_idot(self):
+    def GetUVWidot(self) -> torch.Tensor:
         return self.vUVWidot
+
+    def GetUVWdot(self) -> torch.Tensor:
+        return self.vUVWdot
+    
+    def GetBodyAccel(self) -> torch.Tensor:
+        return self.vBodyAccel

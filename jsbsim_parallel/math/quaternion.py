@@ -1,5 +1,6 @@
 from typing import List, Optional
 import torch
+from jsbsim_parallel.models.model_base import EulerAngles
 
 class Quaternion:
     def __init__(self, *args, batch_size: torch.Size, device: torch.device =torch.device('cpu')):
@@ -44,6 +45,49 @@ class Quaternion:
             self._initialize_cache(device)
         else:
             raise ValueError("Invalid arguments for FGQuaternion initialization")
+
+    def GetCosEuler(self, angle: EulerAngles):
+        self.ComputeDerived()
+        return self.mEulerCosines[*self.batch_size, angle].unsqueeze(-1)
+    
+    def GetSinEuler(self, angle: EulerAngles):
+        self.ComputeDerived()
+        return self.mEulerSines[*self.batch_size, angle].unsqueeze(-1)
+    
+    def ComputeDerived(self):
+        if not self.mCacheValid:
+            self.ComputeDerivedUnconditional()
+        
+    def ComputeDerivedUnconditional(self):
+        self.mCacheValid = True
+        q0, q1, q2, q3 = self.data[..., 0], self.data[..., 1], self.data[..., 2], self.data[..., 3]
+
+        # Precompute quaternion products for the transformation matrix
+        q0q0, q1q1, q2q2, q3q3 = q0 * q0, q1 * q1, q2 * q2, q3 * q3
+        q0q1, q0q2, q0q3 = q0 * q1, q0 * q2, q0 * q3
+        q1q2, q1q3, q2q3 = q1 * q2, q1 * q3, q2 * q3
+
+        # Fill the transformation matrix according to quaternion formula
+        self.mT[..., 0, 0] = q0q0 + q1q1 - q2q2 - q3q3
+        self.mT[..., 0, 1] = 2.0 * (q1q2 + q0q3)
+        self.mT[..., 0, 2] = 2.0 * (q1q3 - q0q2)
+        self.mT[..., 1, 0] = 2.0 * (q1q2 - q0q3)
+        self.mT[..., 1, 1] = q0q0 - q1q1 + q2q2 - q3q3
+        self.mT[..., 1, 2] = 2.0 * (q2q3 + q0q1)
+        self.mT[..., 2, 0] = 2.0 * (q1q3 + q0q2)
+        self.mT[..., 2, 1] = 2.0 * (q2q3 - q0q1)
+        self.mT[..., 2, 2] = q0q0 - q1q1 - q2q2 + q3q3
+
+        self.mTInv = self.mT.transpose(-1, -2)  # The inverse of an orthogonal matrix is its transpose
+        
+        self.mEulerAngles[..., 0] = torch.atan2(self.mT[..., 2, 1], self.mT[..., 2, 2])  # Roll (phi)
+        self.mEulerAngles[..., 1] = torch.asin(-self.mT[..., 2, 0])                 # Pitch (theta)
+        self.mEulerAngles[..., 2] = torch.atan2(self.mT[..., 1, 0], self.mT[..., 0, 0])  # Yaw (psi)
+
+        self.mEulerSines = torch.sin(self.mEulerAngles)
+        self.mEulerCosines = torch.cos(self.mEulerAngles)
+        # Special case: mEulerSines[..., 1] directly from -mT[..., 0, 2] for pitch (theta) sine
+        self.mEulerSines[..., 1] = -self.mT[..., 0, 2]
 
     def _initialize_cache(self, device):
         """Helper to initialize cache attributes for batched operations"""

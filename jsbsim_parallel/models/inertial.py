@@ -35,8 +35,9 @@ class Inertial:
         self._a = torch.tensor(20925646.32546, dtype=torch.float64, device=device) # WGS84 semimajor axis length in feet
         self._b = torch.tensor(20855486.5951, dtype=torch.float64, device=device) # WGS84 semiminor axis length in feet
         self._gravType = GravType.WGS84
-        self._omega_planet = torch.tensor([0.0, 0.0, self._rotation_rate], dtype=torch.float64, device=device)
-
+        self.vOmegaPlanet = torch.tensor([0.0, 0.0, self._rotation_rate], dtype=torch.float64, device=device)
+        self.vGravAccel = torch.zeros(*size, 3, dtype=torch.float64, device=device)
+        
         # Standard gravity (9.80665 m/s^2) in ft/s^2 which is the gravity at 45 deg.
         # of latitude (see ISA 1976 and Steven & Lewis)
         # It includes the centripetal acceleration.        
@@ -44,7 +45,7 @@ class Inertial:
         self._in = InertialInputs(device=device, batch_size=size)
 
     def omega_planet(self):
-        return self._omega_planet
+        return self.vOmegaPlanet
     
     def semi_major(self):
         return self._a
@@ -57,6 +58,9 @@ class Inertial:
 
     def standard_gravity(self):
         return self._gAccelReference    
+    
+    def GetGravity(self) -> torch.Tensor:
+        return self.vGravAccel
     
     def run(holding: bool) -> bool:
         pass

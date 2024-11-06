@@ -98,7 +98,15 @@ class Aerodynamics:
 
         self._in = AerodynamicsInputs(device, batch_size)
 
-        pass
+
+    def GetvFw(self) -> torch.Tensor:
+        return self.vFw
+    
+    def GetForces(self) -> torch.Tensor:
+        return self.vForces
+    
+    def GetMoments(self) -> torch.Tensor:
+        return self.vMoments
 
     def run(self, holding: bool) -> bool:
         pass

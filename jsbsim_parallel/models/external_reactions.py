@@ -11,6 +11,12 @@ class ExternalReactions:
         self.vTotalForces = torch.zeros(*batch_size, 3, dtype=torch.float64, device=device)
         self.vTotalMoments = torch.zeros(*batch_size, 3, dtype=torch.float64, device=device)
 
+    def GetForces(self) -> torch.Tensor:
+        return self.vTotalForces
+    
+    def GetMoments(self) -> torch.Tensor:
+        return self.vTotalMoments
+    
     def run(self, holding: bool) -> bool:
         if holding:
             return False

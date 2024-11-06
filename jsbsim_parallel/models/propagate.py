@@ -6,6 +6,7 @@ import torch
 from jsbsim_parallel.models.inertial import Inertial
 from jsbsim_parallel.math.location import Location
 from jsbsim_parallel.math.quaternion import Quaternion
+from jsbsim_parallel.models.model_base import EulerAngles
 
 class IntegratorType(Enum):
   NoIntegrator = 0
@@ -135,9 +136,9 @@ class Propagate:
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.device = device
         self.inertial = inertial
+        self.vVel = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
         self._in = PropagateInputs(device, batch_size)
         self.VState = VehicleState(queue_length=5, device=device, batch_size=batch_size)
-      
 
         # Earth position angle (?)
         self.epa = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
@@ -188,6 +189,12 @@ class Propagate:
         #bind() propertymanager acts as a service bus, tying addresses to functions, get/set.
         #we need to avoid that pattern to keep track of data transfers.
 
+    def GetCosEuler(self, angle: EulerAngles) -> torch.Tensor:
+        return self.VState.qAttitudeLocal.GetCosEuler(angle)
+    
+    def GetSinEuler(self, angle: EulerAngles) -> torch.Tensor:
+        return self.VState.qAttitudeLocal.GetSinEuler(angle)
+
     def GetLocation(self) -> torch.Tensor:
         return self.VState.vLocation
     
@@ -215,36 +222,60 @@ class Propagate:
         #reset to IC.
         return True
 
-    def GetTl2b(self):
+    def GetTerrainAngularVelocity(self) -> torch.Tensor:
+        return self.LocalTerrainAngularVelocity
+    
+    def GetTerrainVelocity(self) -> torch.Tensor:
+        return self.LocalTerrainVelocity
+    
+    def GetInertialPosition(self) -> torch.Tensor:
+        return self.VState.vInertialPosition
+    
+    def GetTec2i(self) -> torch.Tensor:
+        return self.Tec2i
+
+    def GetTb2i(self) -> torch.Tensor:
+        return self.Tb2i
+
+    def GetTi2b(self) -> torch.Tensor:
+        return self.Ti2b
+    
+    def GetTl2b(self) -> torch.Tensor:
         return self.Tl2b
     
-    def GetTb2l(self):
+    def GetTb2l(self) -> torch.Tensor:
         return self.Tb2l
     
-    def GetTec2l(self):
+    def GetTec2l(self) -> torch.Tensor:
         return self.Tec2l
 
-    def GetTec2b(self):
+    def GetTec2b(self) -> torch.Tensor:
         return self.Tec2b
     
-    def GetPQR(self):
+    def GetPQR(self) -> torch.Tensor:
         return self.VState.vPQR
-    
-    def GetUVW(self):
+
+    def GetPQRi(self) -> torch.Tensor:
+        return self.VState.vPQRi
+
+    def GetUVW(self) -> torch.Tensor:
         return self.VState.vUVW
     
 
-    def get_location(self):
+    def get_location(self) -> torch.Tensor:
         return self.VState.vLocation
 
-    def GetAltitudeASL(self):
+    def GetAltitudeASL(self) -> torch.Tensor:
         return self.VState.vLocation.GetRadius() - self.VState.vLocation.GetSeaLevelRadius()
 
-    def GetDistanceAGL(self):
+    def GetDistanceAGL(self) -> torch.Tensor:
         return self.inertial.get_altitude_AGL(self.VState.vLocation)
     
-    def get_geod_latitude_deg(self):
+    def GetGeodLatitudeDeg(self) -> torch.Tensor:
         return self.VState.vLocation.GetGeodLatitudeDeg()
 
-    def get_longitude_deg(self):
+    def GetLongitudeDeg(self) -> torch.Tensor:
         return self.VState.vLocation.GetLongitudeDeg()
+
+    def GetVel(self) -> torch.Tensor:
+        return self.vVel

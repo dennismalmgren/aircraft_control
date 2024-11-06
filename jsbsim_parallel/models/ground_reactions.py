@@ -26,7 +26,9 @@ class GroundReactions(ModelBase):
         self.isSolid = torch.zeros(*self.size, 1, dtype=torch.bool, device=device)
         self.pos = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
 
-
+    def GetMultipliersList(self) -> List[LagrangeMultiplier]:
+        return self.multipliers
+    
     def GetWOW(self) -> torch.Tensor:
         if len(self.lGear) == 0:
             return torch.zeros(*self.size, 1, dtype=torch.bool, device=self.device)
@@ -47,6 +49,12 @@ class GroundReactions(ModelBase):
         self.isSolid.fill_(True)
         self.pos.zero_()
 
+    def GetForces(self) -> torch.Tensor:
+        return self.vForces
+    
+    def GetMoments(self) -> torch.Tensor:
+        return self.vMoments
+    
     def run(self, holding: bool) -> bool:
         if holding:
             return False

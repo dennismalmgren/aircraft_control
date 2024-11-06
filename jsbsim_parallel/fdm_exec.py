@@ -10,15 +10,19 @@ from .models import (
     Aerodynamics,
     Auxiliary,
     Accelerations,
+    Aircraft,
     GroundReactions,
     ExternalReactions,
     StandardAtmosphere,
+    BuoyantForces,
     Winds,
     UnitConversions,
     FCS,
     MassBalance,
     Propulsion
 )
+
+from jsbsim_parallel.models.model_base import EulerAngles
 
 # This list of enums is very important! The order in which models are listed
 # here determines the order of execution of the models.
@@ -64,12 +68,12 @@ class FDMExec:
         self.systems = FCS(self.device, self.batch_size)
         self.mass_balance = MassBalance(self.propagate, device=self.device, batch_size=self.batch_size)
         self.auxiliary = Auxiliary(self.atmosphere, self.device, self.batch_size)
-        self.propulsion = Propulsion(device = self.device, batch_size = self.batch_size) 
+        self.propulsion = Propulsion(self.mass_balance, device = self.device, batch_size = self.batch_size) 
         self.aerodynamics = Aerodynamics(device = self.device, batch_size = self.batch_size)
         self.ground_reactions = GroundReactions(self.device, self.batch_size)
         self.external_reactions = ExternalReactions(self.device, self.batch_size)
-        #self.buoyantforces
-        #self.aircraft
+        self.buoyant_forces = BuoyantForces(self.device, self.batch_size)
+        self.aircraft = Aircraft(self.device, self.batch_size)
         self.accelerations = Accelerations(self.device, self.batch_size)
         #self.output
         self.models: Dict[ModelOrder, Any] = {
@@ -85,8 +89,8 @@ class FDMExec:
             ModelOrder.Aerodynamics: self.aerodynamics,
             ModelOrder.GroundReactions: self.ground_reactions,
             ModelOrder.ExternalReactions: self.external_reactions,
-            #ModelOrder.BuoyantForces: self.buoyantforces,
-            #ModelOrder.Aircraft: self.aircraft,
+            ModelOrder.BuoyantForces: self.buoyant_forces,
+            ModelOrder.Aircraft: self.aircraft,
             ModelOrder.Accelerations: self.accelerations,
             #ModelOrder.Output: self.output
         }
@@ -109,17 +113,18 @@ class FDMExec:
                 self.models[model_id].init_model()
     
     def load_inputs(self, model_id):
-        if model_id == ModelOrder.Inertial:
-            self.inertial._in.Position = self.propagate.get_location()
-        elif model_id == ModelOrder.Propagate:
-            self.propagate._in.vPQRidot = self.accelerations.get_pqr_idot()
-            self.propagate._in.vUVWidot = self.accelerations.get_uvw_idot()
+        if model_id == ModelOrder.Propagate:
+            self.propagate._in.vPQRidot = self.accelerations.GetPQRidot()
+            self.propagate._in.vUVWidot = self.accelerations.GetUVWidot()
+            self.propagate._in.DeltaT = self.dT
         elif model_id == ModelOrder.Input:
             pass
+        elif model_id == ModelOrder.Inertial:
+            self.inertial._in.Position = self.propagate.get_location()
         elif model_id == ModelOrder.Atmosphere:
             self.atmosphere._in.altitudeASL = self.propagate.GetAltitudeASL()
-            self.atmosphere._in.geod_latitude_deg = self.propagate.get_geod_latitude_deg()
-            self.atmosphere._in.longitude_deg = self.propagate.get_longitude_deg()
+            self.atmosphere._in.GeodLatitudeDeg = self.propagate.GetGeodLatitudeDeg()
+            self.atmosphere._in.LongitudeDeg = self.propagate.GetLongitudeDeg()
         elif model_id == ModelOrder.Winds:
             self.winds._in.AltitudeASL = self.propagate.GetAltitudeASL()
             self.winds._in.DistanceAGL = self.propagate.GetDistanceAGL()
@@ -127,15 +132,61 @@ class FDMExec:
             self.winds._in.Tw2b = self.auxiliary.GetTw2b()
             self.winds._in.V = self.auxiliary.GetVt()
             self.winds._in.totalDeltaT = self.dT * self.winds.GetRate()
+        elif model_id == ModelOrder.Auxiliary:
+            self.auxiliary._in.Pressure     = self.atmosphere.GetPressure()
+            self.auxiliary._in.Density      = self.atmosphere.GetDensity()
+            self.auxiliary._in.Temperature  = self.atmosphere.GetTemperature()
+            self.auxiliary._in.SoundSpeed   = self.atmosphere.GetSoundSpeed()
+            self.auxiliary._in.KinematicViscosity = self.atmosphere.GetKinematicViscosity()
+            self.auxiliary._in.DistanceAGL  = self.propagate.GetDistanceAGL()
+            self.auxiliary._in.Mass         = self.mass_balance.GetMass()
+            self.auxiliary._in.Tl2b         = self.propagate.GetTl2b()
+            self.auxiliary._in.Tb2l         = self.propagate.GetTb2l()
+            self.auxiliary._in.vPQR         = self.propagate.GetPQR()
+            self.auxiliary._in.vPQRi        = self.propagate.GetPQRi()
+            self.auxiliary._in.vPQRidot     = self.accelerations.GetPQRidot()
+            self.auxiliary._in.vUVW         = self.propagate.GetUVW()
+            self.auxiliary._in.vUVWdot      = self.accelerations.GetUVWdot()
+            self.auxiliary._in.vVel         = self.propagate.GetVel()
+            self.auxiliary._in.vBodyAccel   = self.accelerations.GetBodyAccel()
+            self.auxiliary._in.ToEyePt      = self.mass_balance.StructuralToBody(self.aircraft.GetXYZep())
+            self.auxiliary._in.VRPBody      = self.mass_balance.StructuralToBody(self.aircraft.GetXYZvrp())
+            self.auxiliary._in.RPBody       = self.mass_balance.StructuralToBody(self.aircraft.GetXYZrp())
+            self.auxiliary._in.vFw          = self.aerodynamics.GetvFw()
+            self.auxiliary._in.vLocation    = self.propagate.GetLocation()
+            self.auxiliary._in.CosTht       = self.propagate.GetCosEuler(EulerAngles.Tht)
+            self.auxiliary._in.SinTht       = self.propagate.GetSinEuler(EulerAngles.Tht)
+            self.auxiliary._in.CosPhi       = self.propagate.GetCosEuler(EulerAngles.Phi)
+            self.auxiliary._in.SinPhi       = self.propagate.GetSinEuler(EulerAngles.Phi)
+            self.auxiliary._in.TotalWindNED = self.winds.GetTotalWindNED()
+            self.auxiliary._in.TurbPQR      = self.winds.GetTurbPQR()
         elif model_id == ModelOrder.Systems:
             pass
         elif model_id == ModelOrder.Propulsion:
-            self.propulsion._in.Pressure = self.atmosphere.get_pressure()
-            self.propulsion._in.PressureRatio = self.atmosphere.get_pressure_ratio()
-            self.propulsion._in.Temperature = self.atmosphere.GetTemperature()
-            self.propulsion._in.DensityRatio = self.atmosphere.get_density_ratio()
-            self.propulsion._in.Density = self.atmosphere.GetDensity()
-            self.propulsion._in.Soundspeed = self.atmosphere.GetSoundspeed()
+            self.propulsion._in.Pressure         = self.atmosphere.GetPressure()
+            self.propulsion._in.PressureRatio    = self.atmosphere.GetPressureRatio()
+            self.propulsion._in.Temperature      = self.atmosphere.GetTemperature()
+            self.propulsion._in.DensityRatio     = self.atmosphere.GetDensityRatio()
+            self.propulsion._in.Density          = self.atmosphere.GetDensity()
+            self.propulsion._in.Soundspeed       = self.atmosphere.GetSoundSpeed()
+            self.propulsion._in.TotalPressure    = self.auxiliary.GetTotalPressure()
+            self.propulsion._in.Vc               = self.auxiliary.GetVcalibratedKTS()
+            self.propulsion._in.Vt               = self.auxiliary.GetVt()
+            self.propulsion._in.qbar             = self.auxiliary.Getqbar()
+            self.propulsion._in.TAT_c            = self.auxiliary.GetTAT_C()
+            self.propulsion._in.AeroUVW          = self.auxiliary.GetAeroUVW()
+            self.propulsion._in.AeroPQR          = self.auxiliary.GetAeroPQR()
+            self.propulsion._in.alpha            = self.auxiliary.Getalpha()
+            self.propulsion._in.beta             = self.auxiliary.Getbeta()
+            self.propulsion._in.TotalDeltaT      = self.dT * self.propulsion.GetRate()
+            self.propulsion._in.ThrottlePos      = self.systems.GetThrottlePos()
+            self.propulsion._in.MixturePos       = self.systems.GetMixturePos()
+            self.propulsion._in.ThrottleCmd      = self.systems.GetThrottleCmd()
+            self.propulsion._in.MixtureCmd       = self.systems.GetMixtureCmd()
+            self.propulsion._in.PropAdvance      = self.systems.GetPropAdvance()
+            self.propulsion._in.PropFeather      = self.systems.GetPropFeather()
+            self.propulsion._in.H_agl            = self.propagate.GetDistanceAGL()
+            self.propulsion._in.PQRi             = self.propagate.GetPQRi()
         elif model_id == ModelOrder.Aerodynamics:
             self.aerodynamics._in.Alpha     = self.auxiliary.Getalpha()
             self.aerodynamics._in.Beta      = self.auxiliary.Getbeta()
@@ -143,7 +194,7 @@ class FDMExec:
             self.aerodynamics._in.Vt        = self.auxiliary.GetVt()
             self.aerodynamics._in.Tb2w      = self.auxiliary.GetTb2w()
             self.aerodynamics._in.Tw2b      = self.auxiliary.GetTw2b()
-            #self.aerodynamics._in.RPBody    = self.mass_balance.StructuralToBody(self.aircraft.GetXYZrp())
+            self.aerodynamics._in.RPBody    = self.mass_balance.StructuralToBody(self.aircraft.GetXYZrp())
         elif model_id == ModelOrder.GroundReactions:
             # // There are no external inputs to this model.
             self.ground_reactions._in.Vground         = self.auxiliary.GetVground()
@@ -168,4 +219,48 @@ class FDMExec:
             self.ground_reactions._in.vXYZcg          = self.mass_balance.GetXYZcg()
         elif model_id == ModelOrder.ExternalReactions:
             pass
-            
+        elif model_id == ModelOrder.BuoyantForces:
+            self.buoyant_forces._in.Density     = self.atmosphere.GetDensity()
+            self.buoyant_forces._in.Pressure    = self.atmosphere.GetPressure()
+            self.buoyant_forces._in.Temperature = self.atmosphere.GetTemperature()
+            self.buoyant_forces._in.gravity     = self.inertial.GetGravity().norm(2, dim=-1, keepdim=True)
+        elif model_id == ModelOrder.MassBalance:
+            self.mass_balance._in.GasInertia  = self.buoyant_forces.GetGasMassInertia()
+            self.mass_balance._in.GasMass     = self.buoyant_forces.GetGasMass()
+            self.mass_balance._in.GasMoment   = self.buoyant_forces.GetGasMassMoment()
+            self.mass_balance._in.TanksWeight = self.propulsion.GetTanksWeight()
+            self.mass_balance._in.TanksMoment = self.propulsion.GetTanksMoment()
+            self.mass_balance._in.TankInertia = self.propulsion.CalculateTankInertias()
+            self.mass_balance._in.WOW         = self.ground_reactions.GetWOW()
+        elif model_id == ModelOrder.Aircraft:
+            self.aircraft._in.AeroForce     = self.aerodynamics.GetForces()
+            self.aircraft._in.PropForce     = self.propulsion.GetForces()
+            self.aircraft._in.GroundForce   = self.ground_reactions.GetForces()
+            self.aircraft._in.ExternalForce = self.external_reactions.GetForces()
+            self.aircraft._in.BuoyantForce  = self.buoyant_forces.GetForces()
+            self.aircraft._in.AeroMoment    = self.aerodynamics.GetMoments()
+            self.aircraft._in.PropMoment    = self.propulsion.GetMoments()
+            self.aircraft._in.GroundMoment  = self.ground_reactions.GetMoments()
+            self.aircraft._in.ExternalMoment = self.external_reactions.GetMoments()
+            self.aircraft._in.BuoyantMoment = self.buoyant_forces.GetMoments()
+        elif model_id == ModelOrder.Accelerations:
+            self.accelerations._in.J        = self.mass_balance.GetJ()
+            self.accelerations._in.Jinv     = self.mass_balance.GetJinv()
+            self.accelerations._in.Ti2b     = self.propagate.GetTi2b()
+            self.accelerations._in.Tb2i     = self.propagate.GetTb2i()
+            self.accelerations._in.Tec2b    = self.propagate.GetTec2b()
+            self.accelerations._in.Tec2i    = self.propagate.GetTec2i()
+            self.accelerations._in.Moment   = self.aircraft.GetMoments()
+            self.accelerations._in.GroundMoment  = self.ground_reactions.GetMoments()
+            self.accelerations._in.Force    = self.aircraft.GetForces()
+            self.accelerations._in.GroundForce   = self.ground_reactions.GetForces()
+            self.accelerations._in.vGravAccel = self.inertial.GetGravity()
+            self.accelerations._in.vPQRi    = self.propagate.GetPQRi()
+            self.accelerations._in.vPQR     = self.propagate.GetPQR()
+            self.accelerations._in.vUVW     = self.propagate.GetUVW()
+            self.accelerations._in.vInertialPosition = self.propagate.GetInertialPosition()
+            self.accelerations._in.DeltaT   = self.dT
+            self.accelerations._in.Mass     = self.mass_balance.GetMass()
+            self.accelerations._in.MultipliersList = self.ground_reactions.GetMultipliersList()
+            self.accelerations._in.TerrainVelocity = self.propagate.GetTerrainVelocity()
+            self.accelerations._in.TerrainAngularVel = self.propagate.GetTerrainAngularVelocity()

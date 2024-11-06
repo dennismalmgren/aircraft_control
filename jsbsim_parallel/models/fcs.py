@@ -30,7 +30,7 @@ class FCS:
         self.GearCmd = torch.ones(*self.size, 1, dtype=torch.float64, device=device)
         self.GearPos = torch.ones(*self.size, 1, dtype=torch.float64, device=device)
         #vectors
-        self.ThrottleCmd = []
+        self.ThrottleCmd: List[torch.Tensor] = []
         self.ThrottlePos = []
         self.MixtureCmd = []
         self.MixturePos = []
@@ -51,6 +51,21 @@ class FCS:
         self.DfPos = torch.zeros(*self.size, OutputForm.NForms, dtype=torch.float64, device=device)
         self.DsbPos = torch.zeros(*self.size, OutputForm.NForms, dtype=torch.float64, device=device)
         self.DspPos = torch.zeros(*self.size, OutputForm.NForms, dtype=torch.float64, device=device)
+        
+    def GetPropFeather(self) -> List[torch.Tensor]:
+        return self.PropFeather
+    
+    def GetPropAdvance(self) -> List[torch.Tensor]:
+        return self.PropAdvance
+    
+    def GetMixtureCmd(self) -> List[torch.Tensor]:
+        return self.MixtureCmd
+    
+    def GetMixturePos(self) -> List[torch.Tensor]:
+        return self.MixturePos
+    
+    def GetThrottleCmd(self) -> List[torch.Tensor]:
+        return self.ThrottleCmd
         
     def GetThrottlePos(self, engine: Optional[int] = None) -> Union[List[torch.Tensor], torch.Tensor]:
         if engine is None:
