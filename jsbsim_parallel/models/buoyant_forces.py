@@ -3,7 +3,7 @@ from enum import IntEnum
 
 import torch
 
-from jsbsim_parallel.models import GasCell
+from jsbsim_parallel.models.gas_cell import GasCell
 
 class BuoyantForces:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):

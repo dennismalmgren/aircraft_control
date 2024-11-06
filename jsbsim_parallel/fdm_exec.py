@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 from enum import IntEnum
+import os
 
 import torch
 
@@ -19,6 +20,9 @@ from .models import (
     MassBalance,
     Propulsion
 )
+
+from jsbsim_parallel.input_output.xml_filereader import XMLFileReader
+from jsbsim_parallel.input_output.element import Element
 
 # This list of enums is very important! The order in which models are listed
 # here determines the order of execution of the models.
@@ -54,6 +58,42 @@ class FDMExec:
         self.batch_size = batch_size if batch_size is not None else torch.Size([])
         self.dT = 1.0 / 120.0 #todo: source from somewhere
         UnitConversions.initialize(self.device)
+        self.RootDir = ""
+        self.AircraftPath = "aircraft"
+        self.EnginePath = "engine"
+        self.SystemsPath = "systems"
+        self.modelLoaded = False
+        #TODO: instance->Tie
+
+    def SetRootDir(self, root_dir: str):
+        self.RootDir = root_dir
+
+    def SetAircraftPath(self, path: str):
+        self.AircraftPath = os.path.join(self.RootDir, path)
+
+    def SetSystemsPath(self, path: str):
+        self.SystemPath = os.path.join(self.RootDir, path)
+
+    def SetEnginePath(self, path: str):
+        self.EnginePath = os.path.join(self.RootDir, path)
+
+    def LoadModel(self, model: str, addModelToPath:bool = True, batch_size: torch.Size = None):
+        self.batch_size = batch_size
+        self.aircraftCfgFileName = os.path.join(self.AircraftPath, model, model + ".xml")
+        if self.modelLoaded:
+            self.deallocate()
+            self.allocate()
+
+        reader = XMLFileReader()
+        element = reader.load_xml_document(self.aircraftCfgFileName)
+        self.ReadPrologue(element)
+        print('ok')
+
+    def ReadPrologue(self, element: Element):
+        AircraftName = element.get_attribute_value("name");
+        self.aircraft.
+    def deallocate(self):
+        pass
 
     def allocate(self):
         self.inertial = Inertial(self.device, self.batch_size)
@@ -68,8 +108,8 @@ class FDMExec:
         self.aerodynamics = Aerodynamics(device = self.device, batch_size = self.batch_size)
         self.ground_reactions = GroundReactions(self.device, self.batch_size)
         self.external_reactions = ExternalReactions(self.device, self.batch_size)
-        #self.buoyantforces
-        #self.aircraft
+        self.buoyantforces
+        self.aircraft 
         self.accelerations = Accelerations(self.device, self.batch_size)
         #self.output
         self.models: Dict[ModelOrder, Any] = {
@@ -92,6 +132,7 @@ class FDMExec:
         }
         self.load_planet_constants()
         self.initialize_models()
+
 
     def load_planet_constants(self):
         self.propagate._in.vOmegaPlanet = self.inertial.omega_planet() #note, should be cloning (?) but these are more or less constants, now.
