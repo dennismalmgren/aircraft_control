@@ -134,28 +134,40 @@ class Auxiliary:
         self.vLocationVRP = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
         self.units = UnitConversions.get_instance()
 
-    def GetTw2b(self):
+    def GetAeroPQR(self) -> torch.Tensor:
+        return self.vAeroPQR
+    
+    def GetAeroUVW(self) -> torch.Tensor:
+        return self.vAeroUVW
+    
+    def GetTAT_C(self) -> torch.Tensor:
+        return self.tatc
+    
+    def GetTotalPressure(self) -> torch.Tensor:
+        return self.pt
+    
+    def GetTw2b(self) -> torch.Tensor:
         return self.mTw2b
     
-    def GetVt(self):
+    def GetVt(self) -> torch.Tensor:
         return self.Vt
     
-    def Getalpha(self):
+    def Getalpha(self) -> torch.Tensor:
         return self.alpha
 
-    def Getbeta(self):
+    def Getbeta(self) -> torch.Tensor:
         return self.beta
 
-    def Getqbar(self):
+    def Getqbar(self) -> torch.Tensor:
         return self.qbar
 
-    def GetTb2w(self):
+    def GetTb2w(self) -> torch.Tensor:
         return self.mTb2w
         
-    def GetVground(self):
+    def GetVground(self) -> torch.Tensor:
         return self.Vground
     
-    def GetVcalibratedKTS(self):
+    def GetVcalibratedKTS(self) -> torch.Tensor:
         return self.vcas * self.units.FPS_TO_KTS
 
     def run(self, holding: bool) -> bool:

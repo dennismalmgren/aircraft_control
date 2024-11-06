@@ -132,8 +132,17 @@ class GasCell(Force, TemperaturePressureProvider):
 
         self.SetTransformType(torch.zeros(*self.size, 1, dtype=torch.int32, device=self.device))
 
-    def GetTemperature(self):
+    def GetMassMoment(self) -> torch.Tensor:
+        return self.gasCellM    
+
+    def GetMass(self) -> torch.Tensor:
+        return self.Mass
+    
+    def GetInertia(self) -> torch.Tensor:
+        return self.gasCellJ
+    
+    def GetTemperature(self) -> torch.Tensor:
         return self.Temperature
     
-    def GetPressure(self):
+    def GetPressure(self) -> torch.Tensor:
         return self.Pressure

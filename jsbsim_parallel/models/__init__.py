@@ -13,3 +13,4 @@ from .ground_reactions import GroundReactions
 from .external_reactions import ExternalReactions
 from .buoyant_forces import BuoyantForces
 from .gas_cell import GasCell
+from .aircraft import Aircraft

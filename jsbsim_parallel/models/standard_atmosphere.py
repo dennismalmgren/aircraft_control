@@ -11,8 +11,8 @@ class AtmosphereInputs:
         self.device = device
 
         self.altitudeASL = torch.zeros(*size, 1, dtype=torch.float64, device=device)
-        self.geod_latitude_deg = torch.zeros(*size, 1, dtype=torch.float64, device=device)
-        self.longitude_deg = torch.zeros(*size, 1, dtype=torch.float64, device=device)
+        self.GeodLatitudeDeg = torch.zeros(*size, 1, dtype=torch.float64, device=device)
+        self.LongitudeDeg = torch.zeros(*size, 1, dtype=torch.float64, device=device)
 
 
 class StandardAtmosphere:
@@ -50,7 +50,9 @@ class StandardAtmosphere:
         self.SLtemperature: torch.Tensor = torch.tensor(1.8, dtype=torch.float64, device=self.device)
         self.SLsoundspeed: torch.Tensor = torch.tensor(1.0, dtype=torch.float64, device=self.device)
         self.Soundspeed: torch.Tensor = torch.tensor(0.0, dtype=torch.float64, device=self.device)
-        
+        self.KinematicViscosity: torch.Tensor = torch.tensor(0.0, dtype=torch.float64, device=self.device)
+        self.Viscosity: torch.Tensor = torch.tensor(0.0, dtype=torch.float64, device=self.device)
+
         # base class init
         self.StdDaySLsoundspeed = torch.sqrt(self.SHRatio*self.Reng0*self.StdDaySLtemperature)
         
@@ -192,23 +194,27 @@ class StandardAtmosphere:
     def geo_potential_altitude(self, geomet_alt: torch.Tensor) -> torch.Tensor:
         return (geomet_alt * self.earth_radius) / (self.earth_radius + geomet_alt)
     
-    def get_pressure(self) -> torch.Tensor:
+    def GetPressure(self) -> torch.Tensor:
         return self.Pressure
     
-    def get_pressure_ratio(self) -> torch.Tensor:
+    def GetPressureRatio(self) -> torch.Tensor:
         return self.Pressure / self.SLpressure
 
     def GetTemperature(self) -> torch.Tensor:
         return self.Temperature
 
-    def get_density_ratio(self) -> torch.Tensor:
+    def GetDensityRatio(self) -> torch.Tensor:
         return self.Density / self.SLdensity
     
     def GetDensity(self) -> torch.Tensor:
         return self.Density
     
-    def GetSoundspeed(self) -> torch.Tensor:
+    def GetSoundSpeed(self) -> torch.Tensor:
         return self.Soundspeed
+    
+    def GetKinematicViscosity(self) -> torch.Tensor:
+        return self.KinematicViscosity
+    
     #     self.propulsion._in.DensityRatio = self.atmosphere.get_density_ratio()
     #     self.propulsion._in.Density = self.atmosphere.get_density()
     #     self.propulsion._in.Soundspeed = self.atmosphere.get_soundspeed()
