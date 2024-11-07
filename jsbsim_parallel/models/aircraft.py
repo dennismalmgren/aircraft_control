@@ -22,8 +22,6 @@ class AircraftInputs:
         self.ExternalMoment = torch.zeros(*size, 3, dtype=torch.float64, device=device)
         self.BuoyantMoment = torch.zeros(*size, 3, dtype=torch.float64, device=device)
 
-
-
 class Aircraft(ModelBase):
     def __init__(self, 
                  path_provider: ModelPathProvider,
@@ -54,21 +52,64 @@ class Aircraft(ModelBase):
         self.lbarv = torch.zeros(*self.batch_size, 1, dtype=torch.float64, device=device)
         self.vbarh = torch.zeros(*self.batch_size, 1, dtype=torch.float64, device=device)
         self.vbarv = torch.zeros(*self.batch_size, 1, dtype=torch.float64, device=device)
-        if len(self.batch_size) == 0:
-            self.aircraft_names = ["FGAircraft"]
-        else:
-            self.aircraft_names = ["FGAircraft" for _ in range(len(self.batch_size[0]))]
+        # No support for batched aircraft Names yet
+        self.aircraft_name = "FGAircraft"
 
     def SetAircraftName(self, name: str):
-        if len(self.batch_size) == 0:
-            self.aircraft_names = [name]
-        else:
-            self.aircraft_names = [name for _ in range(len(self.batch_size[0]))]
+        # No support for batched aircraft Names yet
+        self.aircraft_name = name
     
-    def Load(self, element: Element) -> bool:
-        if not super().Upload(element, True):
+    def Load(self, el: Element) -> bool:
+        if not super().Upload(el, True):
             return False
 
+        if el.FindElement("wingarea"):
+            self.WingArea.fill_(el.FindElementValueAsNumberConvertTo("wingarea", "FT2"))
+        if el.FindElement("wingspan"):
+            self.WingSpan.fill_(el.FindElementValueAsNumberConvertTo("wingspan", "FT"))
+        if el.FindElement("chord"):
+            self.cbar.fill_(el.FindElementValueAsNumberConvertTo("chord", "FT"))
+        if el.FindElement("wing_incidence"):
+            self.WingIncidence.fill_(el.FindElementValueAsNumberConvertTo("wing_incidence", "RAD"))
+        if el.FindElement("htailarea"):
+            self.HTailArea.fill_(el.FindElementValueAsNumberConvertTo("htailarea", "FT2"))
+        if el.FindElement("htailarm"):
+            self.HTailArm.fill_(el.FindElementValueAsNumberConvertTo("htailarm", "FT"))
+        if el.FindElement("vtailarea"):
+            self.VTailArea.fill_(el.FindElementValueAsNumberConvertTo("vtailarea", "FT2"))
+        if el.FindElement("vtailarm"):
+            self.VTailArm.fill_(el.FindElementValueAsNumberConvertTo("vtailarm", "FT"))
+
+        # Find all LOCATION elements that descend from this METRICS branch of the
+        # config file. This would be CG location, eyepoint, etc.
+        element = el.FindElement("location")
+        while element is not None:
+            element_name = element.GetAttributeValue("name")
+            if element_name == "AERORP":
+                self.vXYZrp = element.FindElementTripletConvertTo("IN", device=self.device, batch_size=self.batch_size)
+            elif element_name == "EYEPOINT":
+                self.vXYZep = element.FindElementTripletConvertTo("IN", device=self.device, batch_size=self.batch_size)
+            elif element_name == "VRP":
+                self.vXYZrp = element.FindElementTripletConvertTo("IN", device=self.device, batch_size=self.batch_size)
+            
+            element = el.FindNextElement("location")
+
+        nonzero_cbar = self.cbar != 0.0
+        self.lbarh.zero_()
+        self.lbarv.zero_()
+        self.lbarh[nonzero_cbar] = self.HTailArm[nonzero_cbar] / self.cbar[nonzero_cbar]
+        self.lbarv[nonzero_cbar] = self.VTailArm[nonzero_cbar] / self.cbar[nonzero_cbar]
+        nonzero_cbar_and_area = (self.cbar != 0.0) & (self.WingArea != 0.0)
+        self.vbarh.zero_()
+        self.vbarv.zero_()
+        self.vbarh[nonzero_cbar_and_area] = (self.HTailArm[nonzero_cbar_and_area] * self.HTailArea[nonzero_cbar_and_area]) / \
+                                             (self.cbar[nonzero_cbar_and_area] * self.WingArea[nonzero_cbar_and_area])
+        self.vbarv[nonzero_cbar_and_area] = (self.VTailArm[nonzero_cbar_and_area] * self.VTailArea[nonzero_cbar_and_area]) / \
+                                            (self.cbar[nonzero_cbar_and_area] * self.WingArea[nonzero_cbar_and_area])
+        
+        #and now, postload
+        
+        super().PostLoad(el)
         return True
     
     def GetForces(self) -> torch.Tensor:

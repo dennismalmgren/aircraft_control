@@ -20,14 +20,53 @@ class ModelBase:
         self.rate = torch.ones(*size, 1, dtype=torch.float64, device=device) #todo: probably a scalar
         self.path_provider = path_provider
 
-    def Upload(self, element: Element, preload: bool) -> bool:
+    def Upload(self, el: Element, preload: bool) -> bool:
         loader = ModelLoader(self)
-        res = loader.open(element)
-        if not res:
+        document = loader.open(el)
+        if not document:
             return False
         
-        return True
+        result = True
+        if preload:
+            result = self.LoadDocument(document)
+       
+        if document != el:
+            el.MergeAttributes(document)
+            #if preload:
+                # TODO: Load local properties
+        
+            element = document.FindElement()
+            while element is not None:
+                el.AddChildElement(element)
+                element.SetParent(el)
+                element = document.FindNextElement()
+        return result
     
+    def LoadDocument(self, element: Element, prefix: str = "") -> bool:
+        
+        #TODO: Load local properties
+
+        result = self.PreLoad(element, prefix)
+        return result
+    
+    def PreLoad(self, element: Element, prefix: str = ""):
+        # that's for ModelFunctions, not supported.    
+        result = True
+        func = element.FindElement("function")
+        if func is not None:
+            result = False
+            print("Unsupported function found")
+        return result
+        
+    def PostLoad(self, element: Element, prefix: str = "") -> bool:
+        func = element.FindElement("function")
+        result = True
+        if func is not None:
+            result = False
+            print("Unsupported function found")
+        return result
+    
+
     def FindFullPathName(self, path: str):
         ap = self.path_provider.GetFullAircraftPath()
         return self.CheckPathName(ap, path)

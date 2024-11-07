@@ -60,7 +60,7 @@ class XMLFileReader:
         # Recursively parse child elements
         for child in xml_elem:
             child_elem = self._parse_element(child)
-            elem.add_child(child_elem)
+            elem.AddChildElement(child_elem)
 
         return elem
 

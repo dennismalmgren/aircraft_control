@@ -48,11 +48,11 @@ class Quaternion:
 
     def GetCosEuler(self, angle: EulerAngles):
         self.ComputeDerived()
-        return self.mEulerCosines[*self.batch_size, angle].unsqueeze(-1)
+        return self.mEulerCosines[..., angle].unsqueeze(-1)
     
     def GetSinEuler(self, angle: EulerAngles):
         self.ComputeDerived()
-        return self.mEulerSines[*self.batch_size, angle].unsqueeze(-1)
+        return self.mEulerSines[..., angle].unsqueeze(-1)
     
     def ComputeDerived(self):
         if not self.mCacheValid:
