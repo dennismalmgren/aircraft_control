@@ -28,7 +28,7 @@ from jsbsim_parallel.input_output.xml_filereader import XMLFileReader
 from jsbsim_parallel.input_output.element import Element
 
 from jsbsim_parallel.models.model_base import EulerAngles
-from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
+from jsbsim_parallel.input_output.simulator_service import SimulatorService
 
 # This list of enums is very important! The order in which models are listed
 # here determines the order of execution of the models.
@@ -58,7 +58,7 @@ class ModelOrder(IntEnum):
     Output = 15
     NumStandardModels = 16
 
-class FDMExec(ModelPathProvider):
+class FDMExec(SimulatorService):
     def __init__(self, device, batch_size: Optional[torch.Size] = None):
         self.device = device
         self.batch_size = batch_size if batch_size is not None else torch.Size([])
@@ -72,8 +72,14 @@ class FDMExec(ModelPathProvider):
         self.modelLoaded = False
         #TODO: instance->Tie
 
+    def GetDeltaT(self):
+        return self.dT
+    
     def GetFullAircraftPath(self):
         return self.FullAircraftPath
+    
+    def GetEnginePath(self):
+        return self.EnginePath
     
     def SetRootDir(self, root_dir: str):
         self.RootDir = root_dir
@@ -123,15 +129,88 @@ class FDMExec(ModelPathProvider):
             print("No metrics element")
             return False
         
+        # Process the mass_balance element. This element is REQUIRED.
+        element = document.FindElement("mass_balance")
+        if element is not None:
+            result = self.mass_balance.Load(element)
+            if not result:
+                print("Invalid mass_balance")
+                return result
+        else:
+            print("No mass_balance element")
+            return False
+
+        # Process the ground_reactions element. This element is REQUIRED.
+        element = document.FindElement("ground_reactions")
+        if element is not None:
+            result = self.ground_reactions.Load(element)
+            if not result:
+                print("Invalid ground_reactions")
+                return result
+        else:
+            print("Invalid ground_reactions")
+            return result
+        
+        # Process the external_reactions element. This element is OPTIONAL.
+        element = document.FindElement("external_reactions")
+        if element is not None:
+            print('Unsupported external reactions')
+
+        # Process the buoyant_forces element. This element is OPTIONAL.
+        element = document.FindElement("buoyant_forces")
+        if element is not None:
+            print('Unsupported buoyant forces')
+
+        # Process the propulsion element. This element is OPTIONAL.
+        element = document.FindElement("propulsion")
+        if element is not None:
+            result = self.propulsion.Load(element)
+            if not result:
+                print("Invalid propulsion")
+                return result
+            for i in range(self.propulsion.GetNumEngines()):
+                self.systems.AddThrottle()
+        else:
+            print("Invalid propulsion")
+            return
+        
+        # Process the system element[s]. This element is OPTIONAL, and there may be more than one.
+        element = document.FindElement("system")
+        while element is not None:
+            print ("Skipping unsupported systems")
+#            result = self.systems.Load(element)
+#            if not result:
+#                print("Invalid system")
+#                return result
+            element = document.FindNextElement("system")
+
+        # Process the autopilot element. This element is OPTIONAL.
+        element = document.FindElement("autopilot")
+        while element is not None:
+            print ("Skipping unsupported autopilot")
+#            result = self.systems.Load(element)
+#            if not result:
+#                print("Invalid system")
+#                return result
+            element = document.FindNextElement("autopilot")
+
+        # Process the flight_control element. This element is OPTIONAL.
+        element = document.FindElement("flight_control")
+        if element:
+            result = self.systems.Load(element)
+            if not result:
+                print("Invalid flight_control")
+                return result
+
+        
         print('ok')
 
     def LoadPlanet(self, element: Element) -> bool:
         return True
     
     def ReadPrologue(self, element: Element):
-        AircraftName = element.GetAttributeValue("name");
+        AircraftName = element.GetAttributeValue("name")
         self.aircraft.SetAircraftName(AircraftName)
-
 
     def deallocate(self):
         pass
@@ -142,7 +221,7 @@ class FDMExec(ModelPathProvider):
         #self.input
         self.atmosphere = StandardAtmosphere(self.device, self.batch_size)
         self.winds = Winds(self, device = self.device, batch_size = self.batch_size)
-        self.systems = FCS(self.device, self.batch_size)
+        self.systems = FCS(self, device = self.device, batch_size = self.batch_size)
         self.mass_balance = MassBalance(self.propagate, self, device=self.device, batch_size=self.batch_size)
         self.auxiliary = Auxiliary(self.atmosphere, self.device, self.batch_size)
         self.propulsion = Propulsion(self.mass_balance, self, device = self.device, batch_size = self.batch_size) 

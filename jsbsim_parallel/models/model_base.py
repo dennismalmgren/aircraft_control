@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from enum import IntEnum
 import torch
 import os
@@ -6,7 +6,8 @@ from pathlib import Path
 
 from jsbsim_parallel.input_output.element import Element
 from jsbsim_parallel.input_output.model_loader import ModelLoader
-from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
+from jsbsim_parallel.input_output.simulator_service import SimulatorService
+from jsbsim_parallel.math.function import Function
 
 class EulerAngles(IntEnum):
     Phi = 0
@@ -14,11 +15,14 @@ class EulerAngles(IntEnum):
     Psi = 2
     
 class ModelBase:
-    def __init__(self, path_provider: ModelPathProvider,
+    def __init__(self, simulator_service: SimulatorService,
                  *, device: torch.device = torch.device("cpu"), batch_size: Optional[torch.Size] = None):
-        size = batch_size if batch_size is not None else torch.Size([])
-        self.rate = torch.ones(*size, 1, dtype=torch.float64, device=device) #todo: probably a scalar
-        self.path_provider = path_provider
+        self.size = batch_size if batch_size is not None else torch.Size([])
+        self.device = device
+        self.rate = torch.ones(*self.size, 1, dtype=torch.float64, device=device) #todo: probably a scalar
+        self.simulator_service = simulator_service
+        self.PreFunctions: List[Function] = []
+        self.PostFunctions: List[Function] = []
 
     def Upload(self, el: Element, preload: bool) -> bool:
         loader = ModelLoader(self)
@@ -53,26 +57,42 @@ class ModelBase:
         # that's for ModelFunctions, not supported.    
         result = True
         func = element.FindElement("function")
-        if func is not None:
-            result = False
-            print("Unsupported function found")
+        while func is not None:
+            fType = func.GetAttributeValue("type")
+            if len(fType) == 0 or fType == "pre":
+                mkfunc = Function(func, prefix, device=self.device, batch_size=self.size)
+                self.PreFunctions.append(mkfunc)
+            elif fType == "template":
+                print("Unsupported function type (template) found") 
+                result = False
+                break
+            func = element.FindNextElement("function")
+
         return result
         
     def PostLoad(self, element: Element, prefix: str = "") -> bool:
-        func = element.FindElement("function")
         result = True
-        if func is not None:
-            result = False
-            print("Unsupported function found")
+        func = element.FindElement("function")
+        while func is not None:
+            fType = func.GetAttributeValue("type")
+            if fType == "post":
+                mkfunc = Function(func, prefix, device=self.device, batch_size=self.size)
+                self.PostFunctions.append(mkfunc)
+            func = element.FindNextElement("function")
         return result
     
-
+    def GetPreFunction(self, name: str) -> Function:
+        for f in self.PreFunctions:
+            if f.GetName() == name:
+                return f
+        return None
+    
     def FindFullPathName(self, path: str):
-        ap = self.path_provider.GetFullAircraftPath()
+        ap = self.simulator_service.GetFullAircraftPath()
         return self.CheckPathName(ap, path)
 
 
-    def CheckPathName(path: str, filename: Path) -> str:
+    def CheckPathName(self, path: str, filename: Path) -> str:
         """
         Constructs a full path and verifies the file exists.
         Appends .xml if the file extension is missing.
@@ -89,8 +109,8 @@ class ModelBase:
         filename, file_extension = os.path.splitext(full_name)
         if file_extension != ".xml":
             full_name = Path(full_name)
-            full_name = path.with_suffix(".xml")
-        return full_name if full_name.exists() else Path()
+            full_name = full_name.with_suffix(".xml")
+        return str(full_name) if full_name.exists() else ""
 
     def GetRate(self):
         return self.rate

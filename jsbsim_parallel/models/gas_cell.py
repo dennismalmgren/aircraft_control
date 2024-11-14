@@ -4,7 +4,7 @@ from enum import IntEnum
 import torch
 
 from jsbsim_parallel.models.external_force import ExternalForce
-from jsbsim_parallel.models.propulsion_models.force import Force
+from jsbsim_parallel.models.propulsion_models.force import Force, TransformType
 from jsbsim_parallel.models import MassBalance
 
 class TemperaturePressureProvider:
@@ -130,7 +130,7 @@ class GasCell(Force, TemperaturePressureProvider):
         self.M_helium = torch.tensor(0.00027409, dtype=torch.float64, device=self.device) # [slug/mol]
 
 
-        self.SetTransformType(torch.zeros(*self.size, 1, dtype=torch.int32, device=self.device))
+        self.SetTransformType(TransformType.NoTransform)
 
     def GetMassMoment(self) -> torch.Tensor:
         return self.gasCellM    

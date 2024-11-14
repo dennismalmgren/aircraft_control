@@ -147,11 +147,12 @@ def apply_env_transforms(env):
         Compose(
             InitTracker(),
             StepCounter(max_steps=2000),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "airspeed", "groundspeed"]),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["goal_alt"]),
+            #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "true_airspeed", "groundspeed", "altdot"]),
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down", "speed_of_sound"]),
+            RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "goal_alt"]),
 #            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
-            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
+            #EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
+            #AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
             #AltitudeToScaleCode(in_keys=["alt", "goal_alt"], out_keys=["alt_code", "goal_alt_code"]),
             #AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
             #CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
@@ -163,9 +164,8 @@ def apply_env_transforms(env):
             #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                         out_key="observation_vector", del_keys=False),                                    
                     
-            CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "rotation", "p", "q", "r", 
-                                "pdot", "qdot", "rdot", "lat", "lon", "alt_code", "goal_alt", "air_density", "speed_of_sound", 
-                                "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
+            CatTensors(in_keys=["goal_alt", "v_north", "v_east", "v_down", "alt", "psi", "theta", "phi",
+                                "p", "q", "r", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
             RewardSum()

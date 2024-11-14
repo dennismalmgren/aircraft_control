@@ -55,13 +55,16 @@ class XMLFileReader:
 
         # Add data lines
         if xml_elem.text and xml_elem.text.strip():
-            elem.add_data(xml_elem.text.strip())
+            lines = xml_elem.text.split('\n')
+            for line in lines:
+                if len(line.strip()) > 0:
+                    elem.add_data(line.strip())
 
         # Recursively parse child elements
         for child in xml_elem:
             child_elem = self._parse_element(child)
             elem.AddChildElement(child_elem)
-
+            child_elem.SetParent(elem)
         return elem
 
 

@@ -17,6 +17,9 @@ class SimulatorState:
     velocity_u_m_sec: float
     velocity_v_m_sec: float
     velocity_w_m_sec: float
+    velocity_north_m_sec: float
+    velocity_east_m_sec: float
+    velocity_down_m_sec: float
     acceleration_udot_m_sec2: float
     acceleration_vdot_m_sec2: float
     acceleration_wdot_m_sec2: float
@@ -60,6 +63,10 @@ class AircraftJSBSimSimulator:
         JSBSimCatalog.velocities_u_fps,
         JSBSimCatalog.velocities_v_fps,
         JSBSimCatalog.velocities_w_fps,
+        #NED velocity
+        JSBSimCatalog.velocities_v_north_fps,
+        JSBSimCatalog.velocities_v_east_fps,
+        JSBSimCatalog.velocities_v_down_fps,
         #linear acceleration
         JSBSimCatalog.accelerations_udot_ft_sec2,
         JSBSimCatalog.accelerations_vdot_ft_sec2,
@@ -80,6 +87,7 @@ class AircraftJSBSimSimulator:
         JSBSimCatalog.position_lat_geod_rad,
         JSBSimCatalog.position_long_gc_rad,
         JSBSimCatalog.position_h_sl_ft,
+        #JSBSimCatalog.velocities_h_dot_fps,
         #environmental
         JSBSimCatalog.atmosphere_rho_slugs_ft3,
         JSBSimCatalog.atmosphere_a_fps,
@@ -155,6 +163,9 @@ class AircraftJSBSimSimulator:
             velocity_u_m_sec = self._get_property(self.jsbsim_catalog.velocities_u_fps, self.ft_to_m),
             velocity_v_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_fps, self.ft_to_m),
             velocity_w_m_sec = self._get_property(self.jsbsim_catalog.velocities_w_fps, self.ft_to_m),
+            velocity_north_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_north_fps, self.ft_to_m),
+            velocity_east_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_east_fps, self.ft_to_m),
+            velocity_down_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_down_fps, self.ft_to_m),            
             acceleration_udot_m_sec2 =  self._get_property(self.jsbsim_catalog.accelerations_udot_ft_sec2, self.ft_to_m),
             acceleration_vdot_m_sec2 = self._get_property(self.jsbsim_catalog.accelerations_vdot_ft_sec2, self.ft_to_m),
             acceleration_wdot_m_sec2 =  self._get_property(self.jsbsim_catalog.accelerations_wdot_ft_sec2, self.ft_to_m),

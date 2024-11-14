@@ -1,10 +1,71 @@
-from typing import Optional
+from typing import Optional, List
+from enum import IntEnum
+
 import torch
 
 from jsbsim_parallel.models.propagate import Propagate 
 from jsbsim_parallel.models.model_base import ModelBase
 from jsbsim_parallel.models.unit_conversions import UnitConversions
-from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
+from jsbsim_parallel.input_output.simulator_service import SimulatorService
+from jsbsim_parallel.input_output.element import Element
+
+class ShapeType(IntEnum):
+    Unspecified = 0
+    Tube = 1
+    Cylinder = 2
+    Sphere = 3
+    Ball = 4
+
+class PointMass:
+    def __init__(self, w: torch.Tensor, vXYZ: torch.Tensor, 
+                 *,
+                 device: torch.device, batch_size: Optional[torch.Size]):
+        self.device = device
+        self.size = batch_size if batch_size is not None else torch.Size([])
+        self.ShapeType = ShapeType.Unspecified
+        self.Location = vXYZ
+        self.Weight = w #weight in pounds
+        self.Radius = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device) #radius in feet
+        self.Length = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device) #length in feet
+        self.Name = ""
+        self.mPMInertia = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=self.device)
+        self.units = UnitConversions.get_instance()
+
+    def SetRadius(self, radius: torch.Tensor):
+        self.Radius = radius
+    
+    def SetLength(self, length: torch.Tensor):
+        self.Length = length
+
+    def SetName(self, name: str):
+        self.Name = name
+
+    def SetPointMassShapeType(self, shapeType: ShapeType):
+        self.ShapeType = shapeType
+
+    def SetPointMassMoI(self, inertiaMatrix: torch.Tensor):
+        self.mPMInertia = inertiaMatrix
+
+    def CalculateShapeInertia(self):
+        if self.ShapeType == ShapeType.Tube:
+            self.mPMInertia[..., 0, 0]= (self.Weight / (self.units.SLUG_TO_LB)) * (self.Radius * self.Radius) # mr^2
+            self.mPMInertia[..., 1, 1]= (self.Weight / (self.units.SLUG_TO_LB * 12)) * (6 * self.Radius * self.Radius + self.Length * self.Length)
+            self.mPMInertia[..., 2, 2]= self.mPMInertia[..., 1, 1]
+        elif self.ShapeType == ShapeType.Cylinder:
+            self.mPMInertia[..., 0, 0]= (self.Weight / (self.units.SLUG_TO_LB * 2)) * (self.Radius * self.Radius) # mr^2
+            self.mPMInertia[..., 1, 1]= (self.Weight / (self.units.SLUG_TO_LB * 12)) * (3 * self.Radius * self.Radius + self.Length * self.Length)
+            self.mPMInertia[..., 2, 2]= self.mPMInertia[..., 1, 1]
+        elif self.ShapeType == ShapeType.Sphere:
+            self.mPMInertia[..., 0, 0]= (self.Weight / (self.units.SLUG_TO_LB * 3)) * (self.Radius * self.Radius * 2) # mr^2
+            self.mPMInertia[..., 1, 1]= self.mPMInertia[..., 0, 0]
+            self.mPMInertia[..., 2, 2]= self.mPMInertia[..., 0, 0]
+        elif self.ShapeType == ShapeType.Ball:
+            self.mPMInertia[..., 0, 0]= (self.Weight / (self.units.SLUG_TO_LB * 5)) * (self.Radius * self.Radius * 2) # mr^2
+            self.mPMInertia[..., 1, 1]= self.mPMInertia[..., 0, 0]
+            self.mPMInertia[..., 2, 2]= self.mPMInertia[..., 0, 0]
+        else:
+            pass
+
 
 class MassBalanceInputs:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
@@ -21,15 +82,16 @@ class MassBalanceInputs:
 
 class MassBalance(ModelBase):
     def __init__(self, propagate: Propagate, 
-                                  path_provider: ModelPathProvider,
+                                  simulator_service: SimulatorService,
     *, device, batch_size: Optional[torch.Size] = None):
-        super().__init__(path_provider, device=device, batch_size=batch_size)
+        super().__init__(simulator_service, device=device, batch_size=batch_size)
+        self.Name = "MassBalance"
         self.device = device
         self.size = batch_size if batch_size is not None else torch.Size([])
 
         self.propagate = propagate
-        self.weight = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
-        self.empty_weight = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.Weight = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
+        self.EmptyWeight = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self.mass = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         
         self.vbaseXYZcg = torch.zeros(*self.size, 3, dtype=torch.float64, device=device)
@@ -41,8 +103,146 @@ class MassBalance(ModelBase):
         self.mJinv = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=device)
         self.pmJ = torch.zeros(*self.size, 3, 3, dtype=torch.float64, device=device)
         self.units = UnitConversions.get_instance()
-        self._in = MassBalanceInputs(device=device, batch_size=batch_size)
+        self._in = MassBalanceInputs(device=device, batch_size=self.size)
+        self.PointMasses: List[PointMass] = []
 
+    def Load(self, document: Element) -> bool:
+        self.Name = "Mass Properties Model: " + document.GetAttributeValue("name")
+
+        if not super().Upload(document, True):
+            return False
+        
+        inertias = self.ReadInertiaMatrix(document)
+        self.SetAircraftBaseInertias(inertias)
+
+        if document.FindElement("emptywt"):
+            self.EmptyWeight.fill_(float(document.FindElementValueAsNumberConvertTo("emptywt", "LBS")))
+
+        element = document.FindElement("location")
+        while element is not None:
+            element_name = element.GetAttributeValue("name")
+            if element_name =="CG":
+                self.vbaseXYZcg = element.FindElementTripletConvertTo("IN", device=self.device, batch_size=self.size)
+            element = document.FindNextElement("location")
+        
+        # Find all POINTMASS elements that descend from this METRICS branch of the
+        # config file.
+        element = document.FindElement("pointmass")
+        while element is not None:
+            self.AddPointMass(element)
+            element = document.FindNextElement("pointmass")
+
+
+        # TODO: Add Child FDM weights
+        # need to investigate if F16 has child FDM's.
+
+        self.Weight = self.EmptyWeight + self._in.TanksWeight + self.GetTotalPointMassWeight() + \
+        self._in.GasMass * self.units.SLUG_TO_LB # + ChildFDMWeight
+
+        self.Mass = self.units.LB_TO_SLUG * self.Weight
+
+        super().PostLoad(document)
+        return True
+    
+    def GetTotalPointMassWeight(self) -> torch.Tensor:
+        total_weight = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+        for pm in self.PointMasses:
+            total_weight += pm.Weight
+        return total_weight
+
+    def AddPointMass(self, el: Element):
+        loc_element = el.FindElement("location")
+        pointmass_name = el.GetAttributeValue("name")
+        if not loc_element:
+            print("Pointmass " + pointmass_name + " has no location")
+            raise Exception("Pointmass " + pointmass_name + " has no location")
+
+        w = torch.tensor(el.FindElementValueAsNumberConvertTo("weight", "LBS"), dtype=torch.float64, device=self.device).expand(*self.size, 1)
+        vXYZ = loc_element.FindElementTripletConvertTo("IN", device=self.device, batch_size=self.size)
+        pm = PointMass(w, vXYZ, device=self.device, batch_size=self.size)
+        pm.SetName(pointmass_name)
+
+        form_element = el.FindElement("form")
+        if form_element is not None:
+            radius = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+            length = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+            shape = form_element.GetAttributeValue("shape")
+            radius_element = form_element.FindElement("radius")
+            length_element = form_element.FindElement("length")
+            if radius_element is not None:
+                radius = radius.fill_(radius_element.FindElementValueAsNumberConvertTo("FT"))
+            if length_element is not None:
+                length = length.fill_(length_element.FindElementValueAsNumberConvertTo("FT"))
+            if shape == "tube":
+                pm.SetPointMassShapeType(ShapeType.Tube)
+                pm.SetRadius(radius)
+                pm.SetLength(length)
+                pm.CalculateShapeInertia()
+            elif shape == "cylinder":
+                pm.SetPointMassShapeType(ShapeType.Cylinder)
+                pm.SetRadius(radius)
+                pm.SetLength(length)
+                pm.CalculateShapeInertia()
+            elif shape == "sphere":
+                pm.SetPointMassShapeType(ShapeType.Sphere)
+                pm.SetRadius(radius)
+                pm.CalculateShapeInertia()
+            elif shape == "ball":
+                pm.SetPointMassShapeType(ShapeType.Ball)
+                pm.SetRadius(radius)
+                pm.CalculateShapeInertia()
+            #else:
+            #    pass
+        else:
+            pm.SetPointMassShapeType(ShapeType.Unspecified)
+            im = self.ReadInertiaMatrix(el)
+            pm.SetPointMassMoI(im)
+
+        # TODO: BIND PROPERTIES
+        self.PointMasses.append(pm)
+
+    def SetAircraftBaseInertias(self, inertias: torch.Tensor):
+        self.baseJ = inertias
+
+    def ReadInertiaMatrix(self, document: Element) -> torch.Tensor:
+        # Initialize values to zero
+        bixx = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+        biyy = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+        bizz = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+        bixy = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+        bixz = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+        biyz = torch.zeros(*self.size, 1, dtype=torch.float64, device=self.device)
+
+         # Update values if elements exist in document
+        if document.FindElement("ixx"):
+            bixx.fill_(document.FindElementValueAsNumberConvertTo("ixx", "SLUG*FT2"))
+        if document.FindElement("iyy"):
+            biyy.fill_(document.FindElementValueAsNumberConvertTo("iyy", "SLUG*FT2"))
+        if document.FindElement("izz"):
+            bizz.fill_(document.FindElementValueAsNumberConvertTo("izz", "SLUG*FT2"))
+        if document.FindElement("ixy"):
+            bixy.fill_(document.FindElementValueAsNumberConvertTo("ixy", "SLUG*FT2"))
+        if document.FindElement("ixz"):
+            bixz.fill_(document.FindElementValueAsNumberConvertTo("ixz", "SLUG*FT2"))
+        if document.FindElement("iyz"):
+            biyz.fill_(document.FindElementValueAsNumberConvertTo("iyz", "SLUG*FT2"))
+
+        # Transform the inertia products from the structural frame to the body frame
+        # and create the inertia matrix.
+        if document.GetAttributeValue("negated_crossproduct_inertia") == "false":
+            inertia_matrix = torch.stack([
+                torch.stack([bixx,  bixy, -bixz], dim=-1),
+                torch.stack([bixy,  biyy,  biyz], dim=-1),
+                torch.stack([-bixz, biyz,  bizz], dim=-1)
+            ], dim=-2)
+        else:
+            inertia_matrix = torch.stack([
+                torch.stack([bixx, -bixy,  bixz], dim=-1),
+                torch.stack([-bixy, biyy, -biyz], dim=-1),
+                torch.stack([bixz, -biyz, bizz], dim=-1)
+            ], dim=-2)
+        return inertia_matrix
+    
     def GetJinv(self) -> torch.Tensor:
         return self.mJinv
     
@@ -110,7 +310,7 @@ class MassBalance(ModelBase):
         return self.vXYZcg
     
     def GetEmptyWeight(self):
-        return self.empty_weight
+        return self.EmptyWeight
     
     def run(holding: bool) -> bool:
         if (holding):

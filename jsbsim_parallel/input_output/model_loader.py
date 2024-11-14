@@ -4,10 +4,10 @@ from pathlib import Path
 
 from jsbsim_parallel.input_output.element import Element
 from jsbsim_parallel.input_output.xml_filereader import XMLFileReader
-from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
+from jsbsim_parallel.input_output.simulator_service import SimulatorService
 
 class ModelLoader:
-    def __init__(self, model: ModelPathProvider):
+    def __init__(self, model: SimulatorService):
         self.model = model  # Assuming model is an instance with a FindFullPathName method.
         self.cached_files = {}
 

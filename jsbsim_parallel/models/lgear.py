@@ -3,6 +3,7 @@ from typing import Optional, List
 
 import torch
 
+from jsbsim_parallel.input_output.element import Element
 
 class BrakeGroup(IntEnum):
     NoBrake = 0
@@ -84,7 +85,9 @@ class LGearInputs:
         #TODO: No Lists
 
 class LGear:
-    def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
+    def __init__(self, el: Element, number: int, input: LGearInputs, *, device: torch.device, batch_size: Optional[torch.Size] = None):
+        # TODO: We are just ignoring this for now, not supporting landings.
+
         self.device = device
         self.size = batch_size if batch_size is not None else torch.Size([])
         
@@ -138,7 +141,7 @@ class LGear:
         self.GearPos = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self.staticFFactor = torch.ones(*self.size, 1, dtype=torch.float64, device=device)
         self.rollingFFactor = torch.ones(*self.size, 1, dtype=torch.float64, device=device)
-        self.maximumForce = torch.full(*self.size, float('inf'), dtype=torch.float64, device=device)
+        self.maximumForce = torch.full((*self.size, 1), float("-inf"), dtype=torch.float64, device=device)
         self.bumpiness = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self.AGL = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)
         self.maxSteerAngle = torch.zeros(*self.size, 1, dtype=torch.float64, device=device)

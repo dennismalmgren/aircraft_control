@@ -5,13 +5,14 @@ import torch
 from jsbsim_parallel.math.lagrange_multiplier import LagrangeMultiplier
 from jsbsim_parallel.models.lgear import LGear, LGearInputs
 from jsbsim_parallel.models.model_base import ModelBase
-from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
+from jsbsim_parallel.input_output.simulator_service import SimulatorService
+from jsbsim_parallel.input_output.element import Element
 
 class GroundReactions(ModelBase):
     def __init__(self, 
-                 path_provider: ModelPathProvider,
+                 simulator_service: SimulatorService,
                  *, device: torch.device, batch_size: Optional[torch.Size] = None):
-        super().__init__(path_provider, device=device, batch_size=batch_size)
+        super().__init__(simulator_service, device=device, batch_size=batch_size)
         self.device = device
         self.size = batch_size if batch_size is not None else torch.Size([])
         self.lGear: List[LGear] = [] #TODO, NO LISTS
@@ -43,6 +44,21 @@ class GroundReactions(ModelBase):
             # Check if any gear in each batch has WOW
             return wow_status.any(dim=0)  # Shape: [*batch_size]
 
+    def Load(self, document: Element) -> bool:
+        self.Name = "Ground Reactions Model: " + document.GetAttributeValue("name")
+
+        num = 0
+        if not super().Upload(document, True):
+            return False
+        
+        contact_element = document.FindElement("contact")
+        while contact_element is not None:
+            lGear = LGear(contact_element, num, self._in, device=self.device, batch_size=self.size)
+            self.lGear.append(lGear)
+            num += 1
+            contact_element = document.FindNextElement("contact")
+        return True
+    
     #from fgsurface
     def resetValues(self):
         self.staticFFactor.fill_(1.0)

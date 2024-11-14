@@ -5,7 +5,7 @@ import torch
 
 from jsbsim_parallel.input_output.element import Element
 from jsbsim_parallel.models.model_base import ModelBase
-from jsbsim_parallel.input_output.model_path_provider import ModelPathProvider
+from jsbsim_parallel.input_output.simulator_service import SimulatorService
 
 class AircraftInputs:
     def __init__(self, device: torch.device, batch_size: Optional[torch.Size] = None):
@@ -24,13 +24,13 @@ class AircraftInputs:
 
 class Aircraft(ModelBase):
     def __init__(self, 
-                 path_provider: ModelPathProvider,
+                 simulator_service: SimulatorService,
                  *, device: torch.device, batch_size: Optional[torch.Size] = None):
         self.device = device
         self.batch_size = batch_size if batch_size is not None else torch.Size([])
-        super().__init__(path_provider, device=device, batch_size=batch_size)
+        super().__init__(simulator_service, device=device, batch_size=batch_size)
 
-        self.path_provider = path_provider
+        self.simulator_service = simulator_service
         self._in = AircraftInputs(device, batch_size)
 
         self.vMoments = torch.zeros(*self.batch_size, 3, dtype=torch.float64, device=device)

@@ -4,6 +4,13 @@ from collections import defaultdict
 import os
 import torch
 
+def isfloat(value: str) -> bool:
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
+    
 class Element:
     conversions_initialized = False
     convert: defaultdict[str, defaultdict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -220,17 +227,48 @@ class Element:
         self.convert["AMPERES"]["AMPERES"] = 1.0
         self.convert = self.deep_convert_to_dict(self.convert)
 
+    def GetElement(self, el: int = 0) -> 'Element':
+        if len(self.children) > el:
+            self.element_index = el
+            return self.children[el]
+        else:
+            self.element_index = 0
+            return None
+
+    def GetNumDataLines(self):
+        return len(self.data_lines)
+    
+    def GetNumElements(self, element_name: str = None) -> int:
+        if not element_name:
+            return len(self.children)
+        else:
+            number_of_elements = 0
+            el = self.FindElement(element_name)
+            while el:
+                number_of_elements += 1
+                el = self.FindNextElement(element_name)
+            return number_of_elements
+
+
+    def GetNextElement(self) -> 'Element':
+        if len(self.children) > self.element_index + 1:
+            self.element_index += 1
+            return self.children[self.element_index]
+        else:
+            self.element_index = 0
+            return None
+        
     def HasAttribute(self, key: str) -> bool:
         return key in self.attributes
 
     def GetAttributeValue(self, key: str) -> str:
         return self.attributes.get(key, "")
 
-    def set_attribute_value(self, key: str, value: str) -> bool:
+    def SetAttributeValue(self, key: str, value: str) -> bool:
         self.attributes[key] = value
         return True
 
-    def get_attribute_value_as_number(self, key: str) -> float:
+    def GetAttributeValueAsNumber(self, key: str) -> float:
         value = self.GetAttributeValue(key)
         try:
             return float(value)
@@ -242,6 +280,9 @@ class Element:
 
     def SetParent(self, element: 'Element'):
         self.parent = element   
+
+    def GetParent(self):
+        return self.parent
 
     def get_num_children(self) -> int:
         return len(self.children)
@@ -278,6 +319,41 @@ class Element:
 
         return triplet
 
+    def FindElementValue(self, el: str) -> str:
+        element = self.FindElement(el)
+        if element is not None:
+            return element.GetDataLine()
+        else:
+            return ""
+    
+    def GetDataLine(self, i: int = 0):
+        if len(self.data_lines) > 0:
+            return self.data_lines[i]
+        else:
+            return ""
+        
+    def FindElementValueAsBoolean(self, el: str) -> bool:
+        element = self.FindElement(el)
+        if element is None:
+            print(f"Attempting to get non-existent element {el}")
+            return False
+        
+        value = element.GetDataAsNumber()
+        if value == 0:
+            return False
+        else:
+            return True
+
+    def FindElementValueAsNumber(self, el: str) -> float:
+        element = self.FindElement(el)
+
+        if element is None:
+           raise ValueError(f"Attempting to get non-existent element {el}")
+
+        value = element.GetDataAsNumber()
+        value = self.DisperseValue(element, value)
+        return value
+    
     def FindElementValueAsNumberConvertTo(self, el: str, target_units: str) -> float:
         element = self.FindElement(el)
 
@@ -318,7 +394,7 @@ class Element:
 
         return value
     
-    def DisperseValue(self, element, value: float, supplied_units: str, target_units: str) -> float:
+    def DisperseValue(self, element: 'Element', value: float, supplied_units: str = "", target_units: str = "") -> float:
         # Check the environment variable
         disperse = os.getenv("JSBSIM_DISPERSE") == "1"  
         if element.HasAttribute("dispersion") and disperse:
