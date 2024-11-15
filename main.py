@@ -80,24 +80,42 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         #'safe_tanh': False
     }
 
-    policy_mlp = MLP(
+    policy_mlp_1 = MLP(
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Tanh,
-        out_features=num_outputs,  # predict only loc
-        num_cells=[256, 256, 256],
+        out_features=256,  # predict only loc
+        num_cells=[256,],
+        activate_last_layer=True
         #norm_class=torch.nn.LayerNorm,
         #norm_kwargs=[{"elementwise_affine": False,
         #             "normalized_shape": hidden_size} for hidden_size in cfg.network.policy_hidden_sizes],
     )
 
     # Initialize policy weights
-    for layer in policy_mlp.modules():
+    for layer in policy_mlp_1.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            layer.bias.data.zero_()
+
+    policy_mlp_2 = MLP(
+        in_features=256, #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Tanh,
+        out_features=num_outputs,  # predict only loc
+        num_cells=[256,256],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                     "normalized_shape": hidden_size} for hidden_size in [256, 256]],
+    )
+
+    # Initialize policy weights
+    for layer in policy_mlp_2.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 1.0)
             layer.bias.data.zero_()
 
     policy_mlp = torch.nn.Sequential(
-        policy_mlp,
+        policy_mlp_1,
+        policy_mlp_2,
         AddStateIndependentNormalScale(
             action_spec.shape[-1], scale_lb=1e-8
         ),
@@ -141,6 +159,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
 def make_raw_environment():
     env = JSBSimControlEnv()
     return env
+
 def apply_env_transforms(env):
     env = TransformedEnv(
         env,
