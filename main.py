@@ -135,20 +135,41 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=ExplorationType.RANDOM,
     )
 
-    value_net = MLP(
+    value_mlp_1 = MLP(
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Tanh,
-        out_features=1,  # predict only loc
-        num_cells=[256, 256, 256],
+        out_features=256,  # predict only loc
+        num_cells=[256],
+        activate_last_layer=True
     )
 
-    for layer in value_net.modules():
+    for layer in value_mlp_1.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 0.01)
             layer.bias.data.zero_()
 
+    value_mlp_2 = MLP(
+        in_features=256, #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Tanh,
+        out_features=1,  # predict only loc
+        num_cells=[256, 256],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                     "normalized_shape": hidden_size} for hidden_size in [256, 256]],
+    )
+
+    for layer in value_mlp_2.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.01)
+            layer.bias.data.zero_()
+
+    value_mlp = torch.nn.Sequential(
+        value_mlp_1,
+        value_mlp_2,
+    )
+    
     value_module = ValueOperator(
-        value_net,
+        value_mlp,
         in_keys=["observation_vector"],
     )
     
