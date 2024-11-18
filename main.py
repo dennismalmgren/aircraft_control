@@ -29,7 +29,7 @@ from torchrl.envs import (
 )
 
 from tensordict.nn import AddStateIndependentNormalScale
-from tensordict.nn import TensorDictModule
+from tensordict.nn import TensorDictModule, TensorDictSequential
 from torchrl.envs import ExplorationType
 from torchrl.modules.distributions import TanhNormal
 from torchrl.modules import MLP, ProbabilisticActor, ValueOperator
@@ -45,6 +45,8 @@ from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
 from transforms.euler_to_rotation_transform import EulerToRotation
 from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
 from transforms.altitude_to_digits_transform import AltitudeToDigits
+from hgauss.support_operator import SupportOperator
+from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -135,47 +137,78 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=ExplorationType.RANDOM,
     )
 
-    value_mlp_1 = MLP(
-        in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
-        out_features=256,  # predict only loc
-        num_cells=[256],
-        activate_last_layer=True
-    )
+    if cfg.ppo.loss_critic_type == "l2":
+        value_mlp_1 = MLP(
+            in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
+            activation_class=torch.nn.Tanh,
+            out_features=256,  # predict only loc
+            num_cells=[256],
+            activate_last_layer=True
+        )
 
-    for layer in value_mlp_1.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.01)
-            layer.bias.data.zero_()
+        for layer in value_mlp_1.modules():
+            if isinstance(layer, torch.nn.Linear):
+                torch.nn.init.orthogonal_(layer.weight, 0.01)
+                layer.bias.data.zero_()
 
-    value_mlp_2 = MLP(
-        in_features=256, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
-        out_features=1,  # predict only loc
-        num_cells=[256, 256],
-        norm_class=torch.nn.LayerNorm,
-        norm_kwargs=[{"elementwise_affine": False,
-                     "normalized_shape": hidden_size} for hidden_size in [256, 256]],
-    )
+        value_mlp_2 = MLP(
+            in_features=256, #+ num_fourier_features * 5 - 5,
+            activation_class=torch.nn.Tanh,
+            out_features=1,  # predict only loc
+            num_cells=[256, 256],
+            norm_class=torch.nn.LayerNorm,
+            norm_kwargs=[{"elementwise_affine": False,
+                        "normalized_shape": hidden_size} for hidden_size in [256, 256]],
+        )
 
-    for layer in value_mlp_2.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.01)
-            layer.bias.data.zero_()
+        for layer in value_mlp_2.modules():
+            if isinstance(layer, torch.nn.Linear):
+                torch.nn.init.orthogonal_(layer.weight, 0.01)
+                layer.bias.data.zero_()
 
-    value_mlp = torch.nn.Sequential(
-        value_mlp_1,
-        value_mlp_2,
-    )
-    
-    value_module = ValueOperator(
-        value_mlp,
-        in_keys=["observation_vector"],
-    )
-    
-    policy_module = policy_module.to(device)
-    value_module = value_module.to(device)
-    return policy_module, value_module
+        value_mlp = torch.nn.Sequential(
+            value_mlp_1,
+            value_mlp_2,
+        )
+
+        value_module = ValueOperator(
+            value_mlp,
+            in_keys=["observation_vector"],
+        )
+        policy_module = policy_module.to(device)
+        value_module = value_module.to(device)
+        return policy_module, value_module
+
+    elif cfg.ppo.loss_critic_type == "smooth_ce":
+        nbins = cfg.network.nbins
+        Vmin = cfg.network.vmin
+        Vmax = cfg.network.vmax
+        support = torch.linspace(Vmin, Vmax, nbins)
+        value_net_kwargs = {
+            "in_features": input_shape[-1],# + num_fourier_features * 5 - 5,
+            "activation_class": torch.nn.SiLU,
+            "out_features": nbins,
+            "num_cells": cfg.network.value_hidden_sizes,
+        }      
+        value_net = MLP(
+            **value_net_kwargs,
+        )
+        
+        in_keys = ["observation_vector"]
+        value_module_1 = TensorDictModule(
+            in_keys=in_keys,
+            out_keys=["state_value_logits"],
+            module=value_net,
+        )
+        support_network = SupportOperator(support)
+        value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
+        value_module = TensorDictSequential(value_module_1, value_module_2)
+        support = support.to(device)
+        policy_module = policy_module.to(device)
+        value_module = value_module.to(device)
+        return policy_module, value_module, support
+
+
 
 def make_raw_environment():
     env = JSBSimControlEnv()
@@ -188,10 +221,10 @@ def apply_env_transforms(env):
             InitTracker(),
             StepCounter(max_steps=2000),
             #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "true_airspeed", "groundspeed", "altdot"]),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down", "speed_of_sound"]),
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "v_north", "v_east", "v_down"]),
             RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "goal_alt"]),
 #            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
-            #EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
+            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             #AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
             #AltitudeToScaleCode(in_keys=["alt", "goal_alt"], out_keys=["alt_code", "goal_alt_code"]),
             #AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
@@ -204,7 +237,7 @@ def apply_env_transforms(env):
             #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                         out_key="observation_vector", del_keys=False),                                    
                     
-            CatTensors(in_keys=["goal_alt", "v_north", "v_east", "v_down", "alt", "psi", "theta", "phi",
+            CatTensors(in_keys=["goal_alt", "alt", "psi", "theta", "phi", "v_north", "v_east", "v_down",
                                 "p", "q", "r", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
@@ -257,16 +290,28 @@ def main(cfg: DictConfig):
         )
 
     template_env = make_environment()
-    policy_module, value_module = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-    loss_module = ClipPPOLoss(
-        actor_network=policy_module,
-        critic_network=value_module,
-        clip_epsilon=cfg.ppo.clip_epsilon,
-        loss_critic_type=cfg.ppo.loss_critic_type,
-        entropy_coef=cfg.ppo.entropy_coef,
-        normalize_advantage= False
-    )
-    
+    if cfg.ppo.loss_critic_type == "l2":
+        policy_module, value_module = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+        loss_module = ClipPPOLoss(
+            actor_network=policy_module,
+            critic_network=value_module,
+            clip_epsilon=cfg.ppo.clip_epsilon,
+            loss_critic_type=cfg.ppo.loss_critic_type,
+            entropy_coef=cfg.ppo.entropy_coef,
+            normalize_advantage= True
+        )
+    elif cfg.ppo.loss_critic_type == "h_gauss":
+        policy_module, value_module, support = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+        loss_module = ClipHGaussPPOLoss(
+            actor_network=policy_module,
+            critic_network=value_module,
+            clip_epsilon=cfg.ppo.clip_epsilon,
+            loss_critic_type=cfg.ppo.loss_critic_type,
+            entropy_coef=cfg.ppo.entropy_coef,
+            normalize_advantage= False,
+            support=support
+        )
+
     adv_module = GAE(
         gamma=cfg.ppo.gamma,
         lmbda=cfg.ppo.gae_lambda,

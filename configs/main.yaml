@@ -34,6 +34,12 @@ ppo:
   epochs: 10
   loss_critic_type: l2
 
+network:
+  nbins: 101
+  vmin: -100
+  vmax: 2000
+  value_hidden_sizes: [2048, 2048, 2048]
+
 optim:
   lr_policy: 3.0e-4
   lr_value: 3.0e-3
