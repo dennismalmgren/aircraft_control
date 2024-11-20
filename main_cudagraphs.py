@@ -123,6 +123,8 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             action_spec.shape[-1], scale_lb=1e-8
         ),
     )
+    policy_parameters = policy_mlp.parameters()
+    
     
     policy_module = ProbabilisticActor(
         TensorDictModule(
@@ -137,6 +139,10 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         return_log_prob=True,
         default_interaction_type=ExplorationType.RANDOM,
     )
+    if cfg.optim.cudagraphs:        
+        policy_module_cg = CudaGraphModule(policy_module.to("cuda:0"))
+    else:
+        policy_module_cg = None
 
     if cfg.ppo.loss_critic_type == "l2":
         value_mlp_1 = MLP(
@@ -176,54 +182,31 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             value_mlp,
             in_keys=["observation_vector"],
         )
-        policy_module = policy_module.to(device)
+        if not cfg.optim.cudagraphs:
+            policy_module = policy_module.to(device)
         value_module = value_module.to(device)
-        return policy_module, value_module
+        return policy_module, value_module, policy_parameters, policy_module_cg
 
-    elif cfg.ppo.loss_critic_type == "hgauss":
+    elif cfg.ppo.loss_critic_type == "smooth_ce":
         nbins = cfg.network.nbins
         Vmin = cfg.network.vmin
         Vmax = cfg.network.vmax
         support = torch.linspace(Vmin, Vmax, nbins)
-
-        value_mlp_1 = MLP(
-            in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=2048,  # predict only loc
-            num_cells=[2048],
-            activate_last_layer=True
+        value_net_kwargs = {
+            "in_features": input_shape[-1],# + num_fourier_features * 5 - 5,
+            "activation_class": torch.nn.SiLU,
+            "out_features": nbins,
+            "num_cells": cfg.network.value_hidden_sizes,
+        }      
+        value_net = MLP(
+            **value_net_kwargs,
         )
-
-        for layer in value_mlp_1.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 1.0)
-                layer.bias.data.zero_()
-
-        value_mlp_2 = MLP(
-            in_features=2048, #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=nbins,  # predict only loc
-            num_cells=[2048, 2048],
-            norm_class=torch.nn.LayerNorm,
-            norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [2048, 2048]],
-        )
-
-        for layer in value_mlp_2.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 1.0)
-                layer.bias.data.zero_()
-
-        value_mlp = torch.nn.Sequential(
-            value_mlp_1,
-            value_mlp_2,
-        )
-
+        
         in_keys = ["observation_vector"]
         value_module_1 = TensorDictModule(
             in_keys=in_keys,
             out_keys=["state_value_logits"],
-            module=value_mlp,
+            module=value_net,
         )
         support_network = SupportOperator(support)
         value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
@@ -262,7 +245,7 @@ def apply_env_transforms(env):
             #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                         out_key="observation_vector", del_keys=False),                                    
                     
-            CatTensors(in_keys=["goal_alt", "alt", "psi", "theta", "phi", "v_north", "v_east", "v_down", "lat",
+            CatTensors(in_keys=["goal_alt", "alt", "psi", "theta", "phi", "v_north", "v_east", "v_down",
                                 "p", "q", "r", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
@@ -316,7 +299,11 @@ def main(cfg: DictConfig):
 
     template_env = make_environment()
     if cfg.ppo.loss_critic_type == "l2":
-        policy_module, value_module, policy_parameters = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+        if cfg.optim.cudagraphs:
+            policy_module, value_module, policy_parameters, policy_model_cg = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+        else:
+            policy_module, value_module, policy_parameters, _ = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+
         loss_module = ClipPPOLoss(
             actor_network=policy_module,
             critic_network=value_module,
@@ -325,7 +312,7 @@ def main(cfg: DictConfig):
             entropy_coef=cfg.ppo.entropy_coef,
             normalize_advantage= True
         )
-    elif cfg.ppo.loss_critic_type == "hgauss":
+    elif cfg.ppo.loss_critic_type == "h_gauss":
         policy_module, value_module, support = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
         loss_module = ClipHGaussPPOLoss(
             actor_network=policy_module,
@@ -349,16 +336,21 @@ def main(cfg: DictConfig):
         #policy_module = torch.compile(policy_module)
         #value_module = torch.compile(value_module)
 
-    actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps,
+    actor_optim = torch.optim.AdamW(policy_parameters, lr=cfg.optim.lr_policy, eps=cfg.optim.eps,
                                     capturable=cfg.optim.cudagraphs)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
 
     frames_remaining = cfg.collector.total_frames
     frames_collected = 0
     # Create collector
+    if cfg.optim.cudagraphs:
+        inference_policy = policy_model_cg
+    else:
+        inference_policy = policy_module
+
     collector = SyncDataCollector(
         create_env_fn=env_maker(cfg),
-        policy=policy_module,
+        policy=inference_policy,
         frames_per_batch=cfg.collector.frames_per_batch,
         total_frames=frames_remaining,
         device=device,

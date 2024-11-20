@@ -28,17 +28,16 @@ collector:
 
 ppo:
   gae_lambda: 0.95
-  gamma: 0.995
+  gamma: 0.99
   clip_epsilon: 0.2
   entropy_coef: 0.0
   epochs: 10
-  loss_critic_type: l2
+  loss_critic_type: hgauss #l2, hgauss
 
 network:
   nbins: 101
   vmin: -100
   vmax: 2000
-  value_hidden_sizes: [2048, 2048, 2048]
 
 optim:
   lr_policy: 3.0e-4
@@ -50,3 +49,4 @@ optim:
   anneal_lr: false
   anneal_clip_epsilon: false
   eps: 1.0e-4
+  cudagraphs: false

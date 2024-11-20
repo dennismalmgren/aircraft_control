@@ -98,7 +98,8 @@ class JSBSimControlEnv(EnvBase):
         if simulator_state.position_h_sl_m < 300:
             alt_reward = -100.0
         else:
-            alt_error_scale = 15.24  # m'
+            #alt_error_scale = 15.24  # m'
+            alt_error_scale = 350.0  # m'
             alt_error = simulator_state.position_h_sl_m - self._target_altitude
             alt_reward = math.exp(-((alt_error / alt_error_scale) ** 2))
         td_out.set("reward", torch.tensor(alt_reward, device=self.device))
