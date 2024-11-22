@@ -21,11 +21,15 @@ def _multi_scale_sinusoidal_encoding(position, device, N=5, base_scale=1, scale_
     Returns:
     - encoding: A numpy array of length N with the sinusoidal encoding values at each scale level.
     """
-    encoding = torch.zeros((*position.shape[:-1], N), device=device, dtype=torch.float32)
-    for i in range(N):
-        wavelength = base_scale * (scale_factor ** i)  # Wavelength increases by scale_factor for each scale
-        encoding[..., i] = torch.sin(2 * torch.pi * position / wavelength).squeeze(-1)  # Sinusoidal function with the given wavelength
+    scales = base_scale * (scale_factor ** torch.arange(N, device=device, dtype=torch.float32))  # All wavelengths at once
+    wavelengths = scales.unsqueeze(0)  # Shape: (1, N) for broadcasting
+    encoding = torch.sin(2 * torch.pi * position / wavelengths).squeeze(-1)  # Broadcast over position and scales
     return encoding
+#    encoding = torch.zeros((*position.shape[:-1], N), device=device, dtype=torch.float32)
+#    for i in range(N):
+#        wavelength = base_scale * (scale_factor ** i)  # Wavelength increases by scale_factor for each scale
+#        encoding[..., i] = torch.sin(2 * torch.pi * position / wavelength).squeeze(-1)  # Sinusoidal function with the given wavelength
+#    return encoding
 
 def _multi_scale_cosinusoidal_encoding(position, device, N=5, base_scale=1, scale_factor=torch.e):
     """
@@ -40,11 +44,16 @@ def _multi_scale_cosinusoidal_encoding(position, device, N=5, base_scale=1, scal
     Returns:
     - encoding: A numpy array of length N with the sinusoidal encoding values at each scale level.
     """
-    encoding = torch.zeros((*position.shape[:-1], N), device=device, dtype=torch.float32)
-    for i in range(N):
-        wavelength = base_scale * (scale_factor ** i)  # Wavelength increases by scale_factor for each scale
-        encoding[..., i] = torch.cos(2 * torch.pi * position / wavelength).squeeze(-1)  # Sinusoidal function with the given wavelength
+    scales = base_scale * (scale_factor ** torch.arange(N, device=device, dtype=torch.float32))  # All wavelengths at once
+    wavelengths = scales.unsqueeze(0)  # Shape: (1, N) for broadcasting
+    encoding = torch.cos(2 * torch.pi * position / wavelengths).squeeze(-1)  # Broadcast over position and scales
     return encoding
+
+#    encoding = torch.zeros((*position.shape[:-1], N), device=device, dtype=torch.float32)
+#    for i in range(N):
+#        wavelength = base_scale * (scale_factor ** i)  # Wavelength increases by scale_factor for each scale
+#        encoding[..., i] = torch.cos(2 * torch.pi * position / wavelength).squeeze(-1)  # Sinusoidal function with the given wavelength
+#    return encoding
 
 class AltitudeToScaleCode(Transform):
     """A transform to convert altitudes to a scale code.

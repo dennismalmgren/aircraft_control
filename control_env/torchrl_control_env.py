@@ -44,42 +44,44 @@ class JSBSimControlEnv(EnvBase):
         self.aircraft_simulator = AircraftJSBSimSimulator(config)
 #velocities/h-dot-fps 
         self.observation_spec = Composite(
-            u = Unbounded(shape=(1,), device=device, dtype=torch.float32), #u
-            v = Unbounded(shape=(1,), device=device, dtype=torch.float32), #v
-            w = Unbounded(shape=(1,), device=device, dtype=torch.float32), #w
-            udot = Unbounded(shape=(1,), device=device, dtype=torch.float32), #udot
-            vdot = Unbounded(shape=(1,), device=device, dtype=torch.float32), #vdot
-            wdot = Unbounded(shape=(1,), device=device, dtype=torch.float32), #wdot
-            phi = Unbounded(shape=(1,), device=device, dtype=torch.float32), #phi
-            theta = Unbounded(shape=(1,), device=device, dtype=torch.float32), #theta
-            psi = Unbounded(shape=(1,), device=device, dtype=torch.float32), #psi
-            p = Unbounded(shape=(1,), device=device, dtype=torch.float32), #p
-            q = Unbounded(shape=(1,), device=device, dtype=torch.float32), #q
-            r = Unbounded(shape=(1,), device=device, dtype=torch.float32), #r
-            pdot = Unbounded(shape=(1,), device=device, dtype=torch.float32), #pdot
-            qdot = Unbounded(shape=(1,), device=device, dtype=torch.float32), #qdot
-            rdot = Unbounded(shape=(1,), device=device, dtype=torch.float32), #rdot
-            lat = Unbounded(shape=(1,), device=device, dtype=torch.float32), #lat
-            lon = Unbounded(shape=(1,), device=device, dtype=torch.float32), #lon
-            alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), #alt
-            v_north = Unbounded(shape=(1,), device=device, dtype=torch.float32), #v_n
-            v_east = Unbounded(shape=(1,), device=device, dtype=torch.float32), #v_e
-            v_down = Unbounded(shape=(1,), device=device, dtype=torch.float32), #v_d
-            air_density = Unbounded(shape=(1,), device=device, dtype=torch.float32), #air_density
-            speed_of_sound = Unbounded(shape=(1,), device=device, dtype=torch.float32), #speed_of_sound
-            crosswind = Unbounded(shape=(1,), device=device, dtype=torch.float32), #crosswind
-            headwind = Unbounded(shape=(1,), device=device, dtype=torch.float32), #headwind
-            true_airspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32), #true_airspeed
-            groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32), #groundspeed
-            last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32), #last_action
+            u = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            w = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            mach = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            udot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            vdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            wdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            phi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            theta = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
+            psi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            p = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            q = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            r = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            pdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            qdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            rdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            lat = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            lon = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            alt = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_north = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_east = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_down = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            air_density = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            speed_of_sound = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            crosswind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            headwind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            true_airspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32),
             #goals
-            goal_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), #goal_alt
+            target_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
+            target_speed = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
         )
 
         #note that throttle is 0->1 in sim.
         #aileron, elevator, rudder, throttle
         self.action_spec = Bounded(low = torch.tensor([-1.0, -1.0, -1.0, 0.0]),
-                                   high = torch.tensor([1.0, 1.0, 1.0, 1.0]),
+                                   high = torch.tensor([1.0, 1.0, 1.0, 2.0]),
                                    device=device,
                                    dtype=torch.float32)
         
@@ -93,16 +95,22 @@ class JSBSimControlEnv(EnvBase):
         self.state_spec = self.observation_spec.clone()
 
         self._target_altitude = None
+        self._target_speed = None
 
     def _add_reward(self, simulator_state: SimulatorState, td_out):
+        alt_reward = 0.0
+        speed_reward = 0.0
         if simulator_state.position_h_sl_m < 300:
             alt_reward = -100.0
         else:
             #alt_error_scale = 15.24  # m'
-            alt_error_scale = 350.0  # m'
-            alt_error = simulator_state.position_h_sl_m - self._target_altitude
-            alt_reward = math.exp(-((alt_error / alt_error_scale) ** 2))
-        td_out.set("reward", torch.tensor(alt_reward, device=self.device))
+            #alt_error_scale = 350.0  # m'
+            #alt_error = simulator_state.position_h_sl_m - self._target_altitude
+            #alt_reward = math.exp(-((alt_error / alt_error_scale) ** 2))
+            speed_error_scale = 0.5
+            speed_error = simulator_state.velocity_mach - self._target_speed
+            speed_reward = math.exp(-((speed_error / speed_error_scale)**2))
+        td_out.set("reward", torch.tensor(alt_reward + speed_reward, device=self.device))
         
     def _evaluate_terminated(self, simulator_state: SimulatorState) -> bool:
         if simulator_state.position_h_sl_m < 300:
@@ -139,6 +147,7 @@ class JSBSimControlEnv(EnvBase):
         tensordict["u"] =  torch.tensor([simulator_state.velocity_u_m_sec], device=self.device)
         tensordict["v"] =  torch.tensor([simulator_state.velocity_v_m_sec], device=self.device)
         tensordict["w"] =  torch.tensor([simulator_state.velocity_w_m_sec], device=self.device)
+        tensordict["mach"] = torch.tensor([simulator_state.velocity_mach], device=self.device)
         tensordict["v_north"] =  torch.tensor([simulator_state.velocity_north_m_sec], device=self.device)
         tensordict["v_east"] =  torch.tensor([simulator_state.velocity_east_m_sec], device=self.device)                
         tensordict["v_down"] =  torch.tensor([simulator_state.velocity_down_m_sec], device=self.device)
@@ -163,7 +172,10 @@ class JSBSimControlEnv(EnvBase):
         tensordict["headwind"] =  torch.tensor([simulator_state.headwind_m_sec], device=self.device)
         tensordict["true_airspeed"] =  torch.tensor([simulator_state.vc_m_sec], device=self.device)
         tensordict["groundspeed"] =  torch.tensor([simulator_state.vg_m_sec], device=self.device)
-        tensordict["goal_alt"] =  torch.tensor([simulator_state.position_h_sl_m - self._target_altitude], device=self.device)
+        #tensordict["goal_alt"] =  torch.tensor([simulator_state.position_h_sl_m - self._target_altitude], device=self.device)
+        tensordict["target_alt"] =  torch.tensor([self._target_altitude], device=self.device)
+        tensordict["target_speed"] =  torch.tensor([self._target_speed], device=self.device)
+        
         return tensordict
 
     def _add_last_action(self, action: torch.tensor, tensordict: TensorDict):
@@ -180,7 +192,8 @@ class JSBSimControlEnv(EnvBase):
             aircraft_ic = AircraftJSBSimInitialConditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
-        self._target_altitude = simulator_state.position_h_sl_m + 1000 #climb a little
+        self._target_altitude = simulator_state.position_h_sl_m + 1000 #will be ignored.
+        self._target_speed = simulator_state.velocity_mach + 1.0 #speed up a little
         self._add_observations(simulator_state, td_out)
         self._add_last_action(primer_action, td_out)
         self._add_done_flags(simulator_state, td_out)

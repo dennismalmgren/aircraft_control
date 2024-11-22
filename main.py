@@ -81,33 +81,34 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "tanh_loc": False,
         #'safe_tanh': False
     }
+    layer_width = 256
 
-    policy_mlp_1 = MLP(
-        in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
-        out_features=256,  # predict only loc
-        num_cells=[256,],
-        activate_last_layer=True
-        #norm_class=torch.nn.LayerNorm,
-        #norm_kwargs=[{"elementwise_affine": False,
-        #             "normalized_shape": hidden_size} for hidden_size in cfg.network.policy_hidden_sizes],
-    )
+    # policy_mlp_1 = MLP(
+    #     in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
+    #     activation_class=torch.nn.Tanh,
+    #     out_features=layer_width,  # predict only loc
+    #     num_cells=[layer_width],
+    #     activate_last_layer=True,
+    #     #norm_class=torch.nn.LayerNorm,
+    #     #norm_kwargs=[{"elementwise_affine": False,
+    #    #              "normalized_shape": hidden_size} for hidden_size in [512]],
+    # )
 
-    # Initialize policy weights
-    for layer in policy_mlp_1.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
-            layer.bias.data.zero_()
+    # # Initialize policy weights
+    # for layer in policy_mlp_1.modules():
+    #     if isinstance(layer, torch.nn.Linear):
+    #         torch.nn.init.orthogonal_(layer.weight, 1.0)
+    #         layer.bias.data.zero_()
 
 
     policy_mlp_2 = MLP(
-        in_features=256, #+ num_fourier_features * 5 - 5,
+        in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Tanh,
         out_features=num_outputs,  # predict only loc
-        num_cells=[256,256],
+        num_cells=[layer_width,layer_width, layer_width],
         norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
-                     "normalized_shape": hidden_size} for hidden_size in [256, 256]],
+                     "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width, layer_width]],
     )
         
     # Initialize policy weights
@@ -117,7 +118,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             layer.bias.data.zero_()
 
     policy_mlp = torch.nn.Sequential(
-        policy_mlp_1,
+       # policy_mlp_1,
         policy_mlp_2,
         AddStateIndependentNormalScale(
             action_spec.shape[-1], scale_lb=1e-8
@@ -181,6 +182,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         return policy_module, value_module
 
     elif cfg.ppo.loss_critic_type == "hgauss":
+        layer_width = 2048
         nbins = cfg.network.nbins
         Vmin = cfg.network.vmin
         Vmax = cfg.network.vmax
@@ -189,8 +191,8 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         value_mlp_1 = MLP(
             in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
             activation_class=torch.nn.Tanh,
-            out_features=2048,  # predict only loc
-            num_cells=[2048],
+            out_features=layer_width,  # predict only loc
+            num_cells=[layer_width],
             activate_last_layer=True
         )
 
@@ -200,13 +202,13 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
                 layer.bias.data.zero_()
 
         value_mlp_2 = MLP(
-            in_features=2048, #+ num_fourier_features * 5 - 5,
+            in_features=layer_width, #+ num_fourier_features * 5 - 5,
             activation_class=torch.nn.Tanh,
             out_features=nbins,  # predict only loc
-            num_cells=[2048, 2048],
+            num_cells=[layer_width, layer_width],
             norm_class=torch.nn.LayerNorm,
             norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [2048, 2048]],
+                        "normalized_shape": hidden_size} for hidden_size in [layer_width, layer_width]],
         )
 
         for layer in value_mlp_2.modules():
@@ -247,7 +249,7 @@ def apply_env_transforms(env):
             StepCounter(max_steps=2000),
             #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "true_airspeed", "groundspeed", "altdot"]),
             RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "v_north", "v_east", "v_down"]),
-            RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "goal_alt"]),
+            RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "target_alt"]),
 #            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             #AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
@@ -262,7 +264,7 @@ def apply_env_transforms(env):
             #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                         out_key="observation_vector", del_keys=False),                                    
                     
-            CatTensors(in_keys=["goal_alt", "alt", "psi", "theta", "phi", "v_north", "v_east", "v_down", "lat",
+            CatTensors(in_keys=["target_alt", "alt", "target_speed", "mach", "rotation", "v_north", "v_east", "v_down", 
                                 "p", "q", "r", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),

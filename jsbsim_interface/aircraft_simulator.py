@@ -20,6 +20,7 @@ class SimulatorState:
     velocity_north_m_sec: float
     velocity_east_m_sec: float
     velocity_down_m_sec: float
+    velocity_mach: float
     acceleration_udot_m_sec2: float
     acceleration_vdot_m_sec2: float
     acceleration_wdot_m_sec2: float
@@ -96,6 +97,8 @@ class AircraftJSBSimSimulator:
         #performance
         JSBSimCatalog.velocities_vc_fps,
         JSBSimCatalog.velocities_vg_fps,
+        #speed
+        JSBSimCatalog.velocities_mach
     ]
 
     def __init__(self, config: AircraftSimulatorConfig):
@@ -187,6 +190,7 @@ class AircraftJSBSimSimulator:
             headwind_m_sec = self._get_property(self.jsbsim_catalog.atmosphere_headwind_fps, self.ft_to_m),
             vc_m_sec = self._get_property(self.jsbsim_catalog.velocities_vc_fps, self.ft_to_m),
             vg_m_sec = self._get_property(self.jsbsim_catalog.velocities_vg_fps, self.ft_to_m),
+            velocity_mach = self._get_property(self.jsbsim_catalog.velocities_mach)
         )
         return simstate
 
