@@ -45,6 +45,8 @@ from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
 from transforms.euler_to_rotation_transform import EulerToRotation
 from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
 from transforms.altitude_to_digits_transform import AltitudeToDigits
+from transforms.min_max_transform import TimeMinPool
+
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
 
@@ -247,6 +249,7 @@ def apply_env_transforms(env):
         Compose(
             InitTracker(),
             StepCounter(max_steps=2000),
+            TimeMinPool(in_keys="mach", out_keys="episode_min_mach"),
             #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "true_airspeed", "groundspeed", "altdot"]),
             RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "v_north", "v_east", "v_down"]),
             RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "target_alt"]),
@@ -401,12 +404,14 @@ def main(cfg: DictConfig):
         frames_collected += frames_in_batch
         pbar.update(frames_in_batch)
         episode_rewards = data["next", "episode_reward"][data["next", "done"]]
+        episode_min_mach = data["next", "episode_min_mach"][data["next", "done"]]
         if len(episode_rewards) > 0:
             episode_length = data["next", "step_count"][data["next", "done"]]
             log_info.update(
                 {
                   #  "train/reward": episode_rewards.mean().item(),
-                    "train/episode_length": episode_length.sum().item()
+                    "train/episode_length": episode_length.float().mean().item(), #mean?
+                    "train/episode_min_mach": episode_min_mach.mean().item()
                     / len(episode_length),
                 }
             )
