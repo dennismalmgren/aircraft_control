@@ -278,12 +278,12 @@ def apply_env_transforms(env):
             #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                         out_key="observation_vector", del_keys=False),                                    
                     
-            CatTensors(in_keys=["target_alt_code", "alt_code", "target_speed", "mach", "target_heading", "rotation", "v_north", "v_east", "v_down", 
-                                "p", "q", "r", "last_action"],
+            CatTensors(in_keys=["target_alt_code", "alt_code", "target_speed", "mach", "target_heading", "rotation", "v_north", "v_east", "v_down",
+                                "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
-            CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
+            CatFrames(N=2, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
-            EpisodeSum(in_keys=["pdot", "p"])
+            EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
         )
     )
     return env
