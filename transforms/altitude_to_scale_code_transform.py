@@ -81,7 +81,7 @@ class AltitudeToScaleCode(Transform):
                 f"The number of in_keys ({len(self.in_keys)}) should be the number of out_keys ({len(self.in_keys)})."
             )
         self.add_cosine = add_cosine
-        self.N = 17
+        self.N = 13
 
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
         for in_key, out_key in zip(self.in_keys, self.out_keys):

@@ -45,7 +45,8 @@ from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
 from transforms.euler_to_rotation_transform import EulerToRotation
 from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
 from transforms.altitude_to_digits_transform import AltitudeToDigits
-from transforms.min_max_transform import TimeMinPool
+from transforms.min_max_transform import TimeMinPool, TimeMaxPool
+from transforms.episode_sum_transform import EpisodeSum
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
@@ -249,13 +250,14 @@ def apply_env_transforms(env):
         Compose(
             InitTracker(),
             StepCounter(max_steps=2000),
-            TimeMinPool(in_keys="mach", out_keys="episode_min_mach"),
+            TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
+            TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
             #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "true_airspeed", "groundspeed", "altdot"]),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "v_north", "v_east", "v_down"]),
-            RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "target_alt"]),
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down"]),
+            #RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "target_alt"]),
 #            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            #AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"]),
+            AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
             #AltitudeToScaleCode(in_keys=["alt", "goal_alt"], out_keys=["alt_code", "goal_alt_code"]),
             #AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
             #CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
@@ -267,11 +269,12 @@ def apply_env_transforms(env):
             #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
             #                         out_key="observation_vector", del_keys=False),                                    
                     
-            CatTensors(in_keys=["target_alt", "alt", "target_speed", "mach", "rotation", "v_north", "v_east", "v_down", 
+            CatTensors(in_keys=["target_alt_code", "alt_code", "target_speed", "mach", "target_heading", "rotation", "v_north", "v_east", "v_down", 
                                 "p", "q", "r", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
             CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
-            RewardSum()
+            RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
+            EpisodeSum(in_keys=["pdot", "p"])
         )
     )
     return env
@@ -404,15 +407,19 @@ def main(cfg: DictConfig):
         frames_collected += frames_in_batch
         pbar.update(frames_in_batch)
         episode_rewards = data["next", "episode_reward"][data["next", "done"]]
+        episode_pdot = data["next", "episode_pdot"][data["next", "done"]]
+        episode_p = data["next", "episode_p"][data["next", "done"]]
         episode_min_mach = data["next", "episode_min_mach"][data["next", "done"]]
+        episode_max_mach = data["next", "episode_max_mach"][data["next", "done"]]
         if len(episode_rewards) > 0:
             episode_length = data["next", "step_count"][data["next", "done"]]
             log_info.update(
                 {
-                  #  "train/reward": episode_rewards.mean().item(),
+                    "train/pdot": (episode_pdot / episode_length).mean().item(),
+                    "train/p": (episode_p / episode_length).mean().item(),
                     "train/episode_length": episode_length.float().mean().item(), #mean?
-                    "train/episode_min_mach": episode_min_mach.mean().item()
-                    / len(episode_length),
+                    "train/episode_min_mach": episode_min_mach.mean().item(),
+                    "train/episode_max_mach": episode_max_mach.mean().item(),
                 }
             )
             for reward_key in reward_keys:

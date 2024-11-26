@@ -47,7 +47,7 @@ class SimulatorState:
 class AircraftJSBSimInitialConditions:
     long_gc_deg: float = 120.0 # geocentric longitude [deg]
     lat_geod_deg: float = 60.0  # geodetic latitude  [deg]
-    h_sl_ft: float = 20000      # altitude above mean sea level [ft]
+    h_sl_ft: float = 6000      # altitude above mean sea level [ft]
     psi_true_deg: float = 0.0   # initial (true) heading [deg] (0, 360)
     u_fps: float = 800.0        # body frame x-axis velocity [ft/s]  (-2200, 2200)
     v_fps: float = 0.0          # body frame y-axis velocity [ft/s]  (-2200, 2200)
