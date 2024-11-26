@@ -86,34 +86,43 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     }
     layer_width = 256
 
-    # policy_mlp_1 = MLP(
-    #     in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-    #     activation_class=torch.nn.Tanh,
-    #     out_features=layer_width,  # predict only loc
-    #     num_cells=[layer_width],
-    #     activate_last_layer=True,
-    #     #norm_class=torch.nn.LayerNorm,
-    #     #norm_kwargs=[{"elementwise_affine": False,
-    #    #              "normalized_shape": hidden_size} for hidden_size in [512]],
-    # )
-
-    # # Initialize policy weights
-    # for layer in policy_mlp_1.modules():
-    #     if isinstance(layer, torch.nn.Linear):
-    #         torch.nn.init.orthogonal_(layer.weight, 1.0)
-    #         layer.bias.data.zero_()
-
-
-    policy_mlp_2 = MLP(
+    policy_mlp_1 = MLP(
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Tanh,
+        out_features=layer_width,  # predict only loc
+        num_cells=[layer_width],
+        activate_last_layer=True,
+        #norm_class=torch.nn.LayerNorm,
+        #norm_kwargs=[{"elementwise_affine": False,
+       #              "normalized_shape": hidden_size} for hidden_size in [512]],
+    )
+
+    # Initialize policy weights
+    for layer in policy_mlp_1.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            layer.bias.data.zero_()
+
+
+    # policy_mlp_2 = MLP(
+    #     in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
+    #     activation_class=torch.nn.Tanh,
+    #     out_features=num_outputs,  # predict only loc
+    #     num_cells=[layer_width,layer_width, layer_width],
+    #     norm_class=torch.nn.LayerNorm,
+    #     norm_kwargs=[{"elementwise_affine": False,
+    #                  "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width, layer_width]],
+    # )
+        
+    policy_mlp_2 = MLP(
+        in_features=layer_width, #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Tanh,
         out_features=num_outputs,  # predict only loc
-        num_cells=[layer_width,layer_width, layer_width],
+        num_cells=[layer_width,layer_width],
         norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
-                     "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width, layer_width]],
+                     "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width]],
     )
-        
     # Initialize policy weights
     for layer in policy_mlp_2.modules():
         if isinstance(layer, torch.nn.Linear):
@@ -121,7 +130,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             layer.bias.data.zero_()
 
     policy_mlp = torch.nn.Sequential(
-       # policy_mlp_1,
+        policy_mlp_1,
         policy_mlp_2,
         AddStateIndependentNormalScale(
             action_spec.shape[-1], scale_lb=1e-8
