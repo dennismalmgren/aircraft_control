@@ -383,7 +383,7 @@ def main(cfg: DictConfig):
     )
     
     
-    reward_keys = ["reward"]
+    reward_keys = ["reward", "task_reward", "smoothness_reward"]
     cfg_loss_ppo_epochs = cfg.ppo.epochs
     cfg_max_grad_norm = cfg.optim.max_grad_norm
     start_time = time.time()

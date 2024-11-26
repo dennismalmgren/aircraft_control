@@ -128,9 +128,10 @@ class JSBSimControlEnv(EnvBase):
         heading_reward = 0.0
         total_reward = 0.0
         smoothness_reward = 0.0
+        task_reward = 0.0
         if simulator_state.position_h_sl_m < 300:
-            alt_reward = -100.0
-            total_reward = 0.0
+            task_reward = -100.0
+            total_reward = task_reward
         else:
             alt_error_scale = 350.0  # m'
             alt_error = simulator_state.position_h_sl_m - self._target_altitude
@@ -150,8 +151,7 @@ class JSBSimControlEnv(EnvBase):
 
             heading_reward = math.exp(-((heading_error / heading_error_scale)**2))
             task_reward = math.pow(alt_reward * speed_reward * heading_reward, 1/3)
-            total_reward = task_reward
-            if math.isclose(total_reward, 1.0):
+            if math.isclose(task_reward, 1.0):
                 smoothness_p_scale = 0.25
                 smoothness_p_reward = math.exp(-((simulator_state.velocity_p_rad_sec / smoothness_p_scale)**2))
                 smoothness_q_scale = 0.25
@@ -159,11 +159,10 @@ class JSBSimControlEnv(EnvBase):
                 smoothness_r_scale = 0.25
                 smoothness_r_reward = math.exp(-((simulator_state.velocity_r_rad_sec / smoothness_r_scale)**2))
                 smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward, 1/3)
-                total_reward = task_reward + smoothness_reward
-                #add smoothness_reward
-            td_out.set("smoothness_reward", torch.tensor(smoothness_reward, device=self.device))
-            td_out.set("task_reward", torch.tensor(task_reward, device=self.device))
-            
+            total_reward = task_reward + smoothness_reward
+
+        td_out.set("smoothness_reward", torch.tensor(smoothness_reward, device=self.device))
+        td_out.set("task_reward", torch.tensor(task_reward, device=self.device))
         td_out.set("reward", torch.tensor(total_reward, device=self.device))
         
     def _evaluate_terminated(self, simulator_state: SimulatorState) -> bool:

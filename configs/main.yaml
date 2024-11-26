@@ -37,7 +37,7 @@ ppo:
 network:
   nbins: 101
   vmin: -100
-  vmax: 2000
+  vmax: 500
 
 optim:
   lr_policy: 3.0e-4
