@@ -22,6 +22,8 @@ from torchrl.data.tensor_specs import (
 from tensordict import TensorDict, TensorDictBase
 
 from jsbsim_interface import AircraftJSBSimSimulator, AircraftSimulatorConfig, AircraftJSBSimInitialConditions, SimulatorState
+from curriculum.curriculum_manager_jsbsim import CurriculumManagerJsbSim
+
 
 DeviceType = Union[torch.device, str, int]
 
@@ -104,6 +106,18 @@ class JSBSimControlEnv(EnvBase):
         self._tolerance_altitude = None
         self._tolerance_speed = None
         self._tolerance_heading = None
+        self.curriculum_manager = CurriculumManagerJsbSim(
+            min_lat_geod_deg = 57.0,
+            max_lat_geod_deg = 60.0,
+            min_long_gc_deg = 15.0,
+            max_long_gc_deg = 20.0,
+            min_altitude = 1000.0,
+            max_altitude = 10000.0,
+            min_speed = 120.0,
+            max_speed = 365.0,
+            min_heading = 0.0,
+            max_heading = 360.0
+        )
 
     def heading_error(self, theta1, theta2):
         """
@@ -241,13 +255,13 @@ class JSBSimControlEnv(EnvBase):
         if "aircraft_ic" in kwargs:
             aircraft_ic = kwargs["aircraft_ic"]
         else:
-            aircraft_ic = AircraftJSBSimInitialConditions()
+            aircraft_ic = self.curriculum_manager.get_initial_conditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
         self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
         self._tolerance_altitude = 40
         self._target_speed = simulator_state.velocity_mach #speed up a little
-        self._tolerance_speed = 0.1
+        self._tolerance_speed = 0.05
         self._target_heading = simulator_state.attitude_psi_rad
         self._tolerance_heading = 3 * torch.pi / 180 #three degrees
         self._add_observations(simulator_state, td_out)

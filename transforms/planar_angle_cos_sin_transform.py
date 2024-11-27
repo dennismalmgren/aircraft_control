@@ -30,7 +30,7 @@ def angular_difference(target_angle: torch.Tensor, current_angle: torch.Tensor):
 
     return error
 
-class AngularDifference(Transform):
+class PlanarAngleCosSin(Transform):
     """A transform to convert altitudes to a scale code.
 
     Args:
@@ -51,23 +51,20 @@ class AngularDifference(Transform):
         in_keys_inv = []
         out_keys_inv = copy.copy(in_keys_inv)
         super().__init__(in_keys, out_keys, in_keys_inv, out_keys_inv)
-        if len(self.in_keys) != 2 * len(self.out_keys):
+        if len(self.in_keys) != len(self.out_keys):
             raise ValueError(
-                f"The number of in_keys ({len(self.in_keys)}) should be the twice number of out_keys ({len(self.in_keys)})."
+                f"The number of in_keys ({len(self.in_keys)}) should be the same as the number of out_keys ({len(self.in_keys)})."
             )
 
 
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
-        for i in range(len(self.out_keys)):
-            in_key1 = self.in_keys[2 * i]
-            in_key2 = self.in_keys[2 * i + 1]
-            out_key = self.out_keys[i]
+        for in_key, out_key in zip(self.in_keys, self.out_keys):
+            value = tensordict[in_key]
+            out_key_cos = torch.cos(value)
+            out_key_sin = torch.sin(value)
+            result = torch.cat([out_key_cos, out_key_sin], dim=-1)
             
-            value1 = tensordict[in_key1]
-            value2 = tensordict[in_key2]
-            difference = angular_difference(value1, value2)
-            
-            tensordict[out_key] = difference
+            tensordict[out_key] = result
         return tensordict
 
     forward = _call

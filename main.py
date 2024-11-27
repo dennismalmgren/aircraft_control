@@ -47,6 +47,9 @@ from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
 from transforms.altitude_to_digits_transform import AltitudeToDigits
 from transforms.min_max_transform import TimeMinPool, TimeMaxPool
 from transforms.episode_sum_transform import EpisodeSum
+from transforms.difference_transform import Difference
+from transforms.angular_difference_transform import AngularDifference
+from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
@@ -261,24 +264,14 @@ def apply_env_transforms(env):
             StepCounter(max_steps=2000),
             TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
             TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
-            #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot", "speed_of_sound", "true_airspeed", "groundspeed", "altdot"]),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down"]),
-            #RewardScaling(loc=0.0, scale=0.001, in_keys=["alt", "target_alt"]),
-#            VecNorm(in_keys=["u", "v", "w"], decay=0.99999, eps=1e-2),
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down", "udot", "vdot", "wdot"]),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
-            #AltitudeToScaleCode(in_keys=["alt", "goal_alt"], out_keys=["alt_code", "goal_alt_code"]),
-            #AltitudeToDigits(in_keys=["alt"], out_keys=["alt_code"]),
-            #CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "phi", "theta", "psi", "p", "q", "r", 
-            #                    "pdot", "qdot", "rdot", "lat", "lon", "alt", "air_density", "speed_of_sound", 
-            #                    "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
-            #                        out_key="observation_vector", del_keys=False),
-            # CatTensors(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "rotation", "p", "q", "r", 
-            #                     "pdot", "qdot", "rdot", "lat", "lon", "alt_code", "goal_alt_code", "air_density", "speed_of_sound", 
-            #                     "crosswind", "headwind", "airspeed", "groundspeed", "last_action"],
-            #                         out_key="observation_vector", del_keys=False),                                    
+            Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
+            PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
+            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
                     
-            CatTensors(in_keys=["target_alt_code", "alt_code", "target_speed", "mach", "target_heading", "rotation", "v_north", "v_east", "v_down",
+            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "v_north", "v_east", "v_down", "udot", "vdot", "wdot",
                                 "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
             CatFrames(N=2, dim=-1, in_keys=["observation_vector"]),
