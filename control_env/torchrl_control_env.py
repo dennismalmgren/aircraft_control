@@ -166,11 +166,11 @@ class JSBSimControlEnv(EnvBase):
             heading_reward = math.exp(-((heading_error / heading_error_scale)**2))
             task_reward = math.pow(alt_reward * speed_reward * heading_reward, 1/3)
             if math.isclose(task_reward, 1.0):
-                smoothness_p_scale = 0.25
+                smoothness_p_scale = 0.1
                 smoothness_p_reward = math.exp(-((simulator_state.velocity_p_rad_sec / smoothness_p_scale)**2))
-                smoothness_q_scale = 0.25
+                smoothness_q_scale = 0.1
                 smoothness_q_reward = math.exp(-((simulator_state.velocity_q_rad_sec / smoothness_q_scale)**2))
-                smoothness_r_scale = 0.25
+                smoothness_r_scale = 0.1
                 smoothness_r_reward = math.exp(-((simulator_state.velocity_r_rad_sec / smoothness_r_scale)**2))
                 smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward, 1/3)
             total_reward = task_reward + smoothness_reward

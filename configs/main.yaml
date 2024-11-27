@@ -15,7 +15,7 @@ logger:
   exp_name: aircraft_control_cosine_sine_goal
   project: aircraft_control
   test_interval: 100_000
-  save_interval: 100_000
+  save_interval: 1_000_000
   num_test_episodes: 5
 
 # collector
