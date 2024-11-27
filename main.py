@@ -294,6 +294,20 @@ def env_maker(cfg):
     parallel_env = apply_env_transforms(parallel_env)
     return parallel_env
 
+def load_model_state(model_name, run_folder_name=""):
+    #debug outputs is at the root.
+    #commandline outputs is at scripts/patrol/outputs
+    load_from_saved_models = run_folder_name == ""
+    if load_from_saved_models:
+        outputs_folder = "../../../saved_models/"
+    else:
+        outputs_folder = "../../"
+
+    model_load_filename = f"{model_name}.pt"
+    load_model_dir = outputs_folder + run_folder_name
+    print('Loading model from ' + load_model_dir)
+    loaded_state = torch.load(load_model_dir + f"{model_load_filename}")
+    return loaded_state
 
 @hydra.main(version_base="1.1", config_path="configs", config_name="main")
 def main(cfg: DictConfig):
@@ -363,8 +377,30 @@ def main(cfg: DictConfig):
                                     capturable=cfg.optim.cudagraphs)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
 
-    frames_remaining = cfg.collector.total_frames
-    frames_collected = 0
+    collected_frames = 0
+    cfg_logger_save_interval = cfg.logger.save_interval
+    loaded_frames = 0
+
+    load_model = True
+    if load_model:
+        model_dir="2024-11-27/02-07-43/"
+        model_name = "training_snapshot_40000"
+        loaded_state = load_model_state(model_name, model_dir)
+
+        actor_state = loaded_state['model_actor']
+        critic_state = loaded_state['model_critic']
+        actor_optim_state = loaded_state['actor_optimizer']
+        critic_optim_state = loaded_state['critic_optimizer']
+        collected_frames = loaded_state['collected_frames']['collected_frames']
+        loaded_frames = collected_frames
+        policy_module.load_state_dict(actor_state)
+        value_module.load_state_dict(critic_state)
+        actor_optim.load_state_dict(actor_optim_state)
+        critic_optim.load_state_dict(critic_optim_state)
+
+
+    frames_remaining = cfg.collector.total_frames - collected_frames
+
     # Create collector
     collector = SyncDataCollector(
         create_env_fn=env_maker(cfg),
@@ -390,6 +426,7 @@ def main(cfg: DictConfig):
     cfg_max_grad_norm = cfg.optim.max_grad_norm
     start_time = time.time()
     pbar = tqdm.tqdm(total=cfg.collector.total_frames, ncols=0)
+    pbar.update(collected_frames)
     sampling_start = time.time()
     num_mini_batches = cfg.collector.frames_per_batch // cfg.optim.mini_batch_size
     total_network_updates = (
@@ -406,7 +443,7 @@ def main(cfg: DictConfig):
         log_info = {}
         sampling_time = time.time() - sampling_start
         frames_in_batch = data.numel()
-        frames_collected += frames_in_batch
+        collected_frames += frames_in_batch
         pbar.update(frames_in_batch)
         episode_rewards = data["next", "episode_reward"][data["next", "done"]]
         episode_pdot = data["next", "episode_pdot"][data["next", "done"]]
@@ -487,9 +524,22 @@ def main(cfg: DictConfig):
                 "train/clip_epsilon": cfg.ppo.clip_epsilon
             }
         )
+
+        if ((i - 1) * frames_in_batch + loaded_frames) // cfg_logger_save_interval < \
+           (i * frames_in_batch + loaded_frames) // cfg_logger_save_interval:
+                savestate = {
+                        'model_actor': policy_module.state_dict(),
+                        'model_critic': value_module.state_dict(),
+                        'actor_optimizer': actor_optim.state_dict(),
+                        'critic_optimizer': critic_optim.state_dict(),
+                        "collected_frames": {"collected_frames": collected_frames},
+                }
+                torch.save(savestate, f"training_snapshot_{collected_frames}.pt")
+
+
         if logger:
             for key, value in log_info.items():
-                logger.log_scalar(key, value, frames_collected)  
+                logger.log_scalar(key, value, collected_frames)  
 
         collector.update_policy_weights_()
         sampling_start = time.time()
