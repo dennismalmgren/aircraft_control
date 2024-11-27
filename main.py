@@ -381,7 +381,7 @@ def main(cfg: DictConfig):
     cfg_logger_save_interval = cfg.logger.save_interval
     loaded_frames = 0
 
-    load_model = True
+    load_model = False
     if load_model:
         model_dir="2024-11-27/02-07-43/"
         model_name = "training_snapshot_40000"

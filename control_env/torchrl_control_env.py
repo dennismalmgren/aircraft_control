@@ -113,7 +113,7 @@ class JSBSimControlEnv(EnvBase):
             max_long_gc_deg = 20.0,
             min_altitude = 1000.0,
             max_altitude = 10000.0,
-            min_speed = 120.0,
+            min_speed = 100.0,
             max_speed = 365.0,
             min_heading = 0.0,
             max_heading = 360.0
