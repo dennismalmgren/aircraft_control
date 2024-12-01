@@ -20,7 +20,7 @@ logger:
 
 # collector
 collector:
-  total_frames: 40_000_000
+  total_frames: 80_000_000
   frames_per_batch: 40_000 #max_episode_steps * env_per_collector
   #frames_per_batch: 2_000 #max_episode_steps * env_per_collector
   device: cpu
@@ -38,7 +38,7 @@ ppo:
 network:
   nbins: 101
   vmin: -100
-  vmax: 500
+  vmax: 400
 
 optim:
   lr_policy: 3.0e-4

@@ -7,6 +7,7 @@ import hydra
 from omegaconf import DictConfig
 import numpy as np
 import torch
+from torch import nn
 from torchrl.envs.utils import step_mdp
 from torchrl.record.loggers import generate_exp_name, get_logger
 from torchrl.data.tensor_specs import TensorSpec, Composite
@@ -75,7 +76,68 @@ def log_trajectory(states, aircraft_uid):
             f.write(f"Name=JAS 39,")
             f.write(f"Color=Red")
             f.write(f"\n")
-            
+
+class SoftmaxLayer(torch.nn.Module):
+    def __init__(self,  internal_dim: int):
+        super().__init__()
+        self.internal_dim = internal_dim
+
+    def forward(self, x):
+        x_shape = x.shape
+        x = x.view(*x_shape[:-1], -1, self.internal_dim)
+        x = torch.softmax(x, dim=-1)
+        x = x.view(x_shape)
+        return x
+    
+class ClampOperator(torch.nn.Module):
+    def __init__(self, vmin, vmax):
+        super().__init__()
+        self.vmin = vmin
+        self.vmax = vmax
+
+    def forward(self, x):
+        return torch.clamp(x, self.vmin, self.vmax)
+
+class NormedLinear(nn.Linear):
+	"""
+	Linear layer with LayerNorm, activation, and optionally dropout.
+	"""
+
+	def __init__(self, *args, dropout=0., act=None, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.ln = nn.LayerNorm(self.out_features)
+		if act is None:
+			act = nn.Mish(inplace=False)
+		self.act = act
+		self.dropout = nn.Dropout(dropout, inplace=False) if dropout else None
+
+	def forward(self, x):
+		x = super().forward(x)
+		if self.dropout:
+			x = self.dropout(x)
+		return self.act(self.ln(x))
+
+	def __repr__(self):
+		repr_dropout = f", dropout={self.dropout.p}" if self.dropout else ""
+		return f"NormedLinear(in_features={self.in_features}, "\
+			f"out_features={self.out_features}, "\
+			f"bias={self.bias is not None}{repr_dropout}, "\
+			f"act={self.act.__class__.__name__})"
+
+
+def mlp(in_dim, mlp_dims, out_dim, act=None, dropout=0.):
+	"""
+	Basic building block of TD-MPC2.
+	MLP with LayerNorm, Mish activations, and optionally dropout.
+	"""
+	if isinstance(mlp_dims, int):
+		mlp_dims = [mlp_dims]
+	dims = [in_dim] + mlp_dims + [out_dim]
+	mlp = nn.ModuleList()
+	for i in range(len(dims) - 2):
+		mlp.append(NormedLinear(dims[i], dims[i+1], dropout=dropout*(i==0)))
+	mlp.append(NormedLinear(dims[-2], dims[-1], act=act) if act else nn.Linear(dims[-2], dims[-1]))
+	return nn.Sequential(*mlp)
 
 def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, device: torch.device):
     input_shape = observation_spec.shape
@@ -85,13 +147,13 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "min": action_spec.space.low,
         "max": action_spec.space.high,
         "tanh_loc": False,
-        #'safe_tanh': False
+       # 'safe_tanh': False
     }
-    layer_width = 256
-
+    layer_width = 1024
+    simnorm_dim = 8
     policy_mlp_1 = MLP(
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
+        activation_class=torch.nn.Mish,
         out_features=layer_width,  # predict only loc
         num_cells=[layer_width],
         activate_last_layer=True,
@@ -116,33 +178,65 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     #     norm_kwargs=[{"elementwise_affine": False,
     #                  "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width, layer_width]],
     # )
-        
-    policy_mlp_2 = MLP(
-        in_features=layer_width, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
-        out_features=num_outputs,  # predict only loc
-        num_cells=[layer_width,layer_width],
-        norm_class=torch.nn.LayerNorm,
-        norm_kwargs=[{"elementwise_affine": False,
-                     "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width]],
-    )
-    # Initialize policy weights
-    for layer in policy_mlp_2.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
-            layer.bias.data.zero_()
 
-    policy_mlp = torch.nn.Sequential(
-        policy_mlp_1,
-        policy_mlp_2,
-        AddStateIndependentNormalScale(
-            action_spec.shape[-1], scale_lb=1e-8
-        ),
-    )
+
+    policy_layer_2 = torch.nn.Sequential(policy_mlp_1,
+                                         SoftmaxLayer(8),
+                                         MLP(
+                                            in_features=layer_width, #+ num_fourier_features * 5 - 5,
+                                            activation_class=torch.nn.Mish,
+                                            out_features=layer_width,  # predict only loc
+                                            num_cells=[layer_width],
+                                            # norm_class=torch.nn.LayerNorm,
+                                            # norm_kwargs=[{"elementwise_affine": False,
+                                            #             "normalized_shape": hidden_size} for hidden_size in [layer_width]],
+                                            activate_last_layer=True
+                                        ),
+                                        SoftmaxLayer(8),
+                                         MLP(
+                                            in_features=layer_width, #+ num_fourier_features * 5 - 5,
+                                            activation_class=torch.nn.Mish,
+                                            out_features=layer_width,  # predict only loc
+                                            num_cells=[layer_width],
+                                            # norm_class=torch.nn.LayerNorm,
+                                            # norm_kwargs=[{"elementwise_affine": False,
+                                            #             "normalized_shape": hidden_size} for hidden_size in [layer_width]],
+                                            activate_last_layer=True
+                                        ),
+                                        SoftmaxLayer(8),
+                                         MLP(
+                                            in_features=layer_width, #+ num_fourier_features * 5 - 5,
+                                            activation_class=torch.nn.Mish,
+                                            out_features=action_spec.shape[-1],  # predict only loc
+                                            num_cells=[layer_width],
+                                            # norm_class=torch.nn.LayerNorm,
+                                            # norm_kwargs=[{"elementwise_affine": False,
+                                            #             "normalized_shape": hidden_size} for hidden_size in [layer_width]],
+                                            #activate_last_layer=True
+                                        ),
+                                        AddStateIndependentNormalScale(
+                                            action_spec.shape[-1], scale_lb=1e-8
+                                        )
+                                         )
+   
+    # # Initialize policy weights
+    # for layer in policy_mlp_1.modules():
+    #     if isinstance(layer, torch.nn.Linear):
+    #         torch.nn.init.orthogonal_(layer.weight, 1.0)
+    #         layer.bias.data.zero_()
+    #clamp_operator = ClampOperator(-10, 10)
+
+    # policy_mlp = torch.nn.Sequential(
+    #     policy_mlp_1,
+    #     policy_layer_2,
+    #     AddStateIndependentNormalScale(
+    #         action_spec.shape[-1], scale_lb=1e-8
+    #     ),
+    # )
     
     policy_module = ProbabilisticActor(
         TensorDictModule(
-            module=policy_mlp,
+            module=policy_layer_2,
             in_keys=["observation_vector"],
             out_keys=["loc", "scale"],
         ),
@@ -261,7 +355,7 @@ def apply_env_transforms(env):
         env,
         Compose(
             InitTracker(),
-            StepCounter(max_steps=2000),
+            StepCounter(max_steps=4000),
             TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
             TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
             RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down", "udot", "vdot", "wdot"]),
@@ -274,7 +368,7 @@ def apply_env_transforms(env):
             CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "v_north", "v_east", "v_down", "udot", "vdot", "wdot",
                                 "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
-            CatFrames(N=2, dim=-1, in_keys=["observation_vector"]),
+            CatFrames(N=6, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
             EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
         )
@@ -373,8 +467,7 @@ def main(cfg: DictConfig):
         #policy_module = torch.compile(policy_module)
         #value_module = torch.compile(value_module)
 
-    actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps,
-                                    capturable=cfg.optim.cudagraphs)
+    actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
 
     collected_frames = 0
@@ -383,8 +476,8 @@ def main(cfg: DictConfig):
 
     load_model = False
     if load_model:
-        model_dir="2024-11-27/02-07-43/"
-        model_name = "training_snapshot_40000"
+        model_dir="2024-11-27/02-22-57/"
+        model_name = "training_snapshot_39040000"
         loaded_state = load_model_state(model_name, model_dir)
 
         actor_state = loaded_state['model_actor']
@@ -410,6 +503,7 @@ def main(cfg: DictConfig):
         device=device,
         storing_device=device,
         max_frames_per_traj=-1,
+      #  compile_policy=True
     )
 
     # Create data buffer

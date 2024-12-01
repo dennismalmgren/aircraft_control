@@ -259,11 +259,11 @@ class JSBSimControlEnv(EnvBase):
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
         self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
-        self._tolerance_altitude = 40
+        self._tolerance_altitude = 100
         self._target_speed = simulator_state.velocity_mach #speed up a little
-        self._tolerance_speed = 0.05
+        self._tolerance_speed = 0.1
         self._target_heading = simulator_state.attitude_psi_rad
-        self._tolerance_heading = 3 * torch.pi / 180 #three degrees
+        self._tolerance_heading = 5 * torch.pi / 180 #three degrees
         self._add_observations(simulator_state, td_out)
         self._add_last_action(primer_action, td_out)
         self._add_done_flags(simulator_state, td_out)
