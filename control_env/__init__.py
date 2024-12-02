@@ -1,1 +1,2 @@
-from .torchrl_control_env import JSBSimControlEnv, JSBSimControlEnvConfig
+from .jsbsim_control_env import JSBSimControlEnv, JSBSimControlEnvConfig
+from .clib_control_env import CLibControlEnv, CLibControlEnvConfig

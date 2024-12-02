@@ -1,0 +1,5 @@
+observation_server_url: http://second-system/observation
+invoke_observation_server_url: false
+inference_host: 0.0.0.0
+inference_port: 5000
+log_file_path: ./logs/inference_server.log

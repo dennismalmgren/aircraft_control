@@ -1,0 +1,21 @@
+syntax = "proto3";  // Specify Protobuf version
+
+message ObservationMessage {
+    float X = 2;            // RT90?
+    float Y = 3;           // RT90?
+    float Z = 4;           // RT90?
+    float v_north = 5;      // System 2 X
+    float v_east = 6;       // System 2 Y
+    float v_down = 7;       // System 2 Z
+    float v_x = 8;          // System 5 Z
+    float v_y = 9;          // System 6 Z
+    float v_z = 10;         // System 7 Z
+    float mach = 11;         // Mach @ current altitude
+    
+    float psi = 12; 
+    float theta = 13;
+    float phi = 14;
+    float pdot = 15;
+    float qdot = 16;
+    float rdot = 17;
+}   

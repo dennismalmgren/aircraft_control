@@ -223,7 +223,7 @@ def gae2(next_dones, next_observation, value, next_reward):
         lastgaelam = advantages[-1]
         nextnonterminal = nextnonterminals[t]
         nextvalues = cur_val
-    advantages = td_rollout["advantages"] = torch.stack(list(reversed(advantages)))
+    advantages = torch.stack(list(reversed(advantages)))
     returns = advantages + vals
     return advantages, returns
 
@@ -328,10 +328,9 @@ update = tensordict.nn.TensorDictModule(
     out_keys=["approx_kl", "v_loss", "pg_loss", "entropy_loss", "old_approx_kl", "clipfrac", "gn"],
 )
 
-
 gae_m = tensordict.nn.TensorDictModule(
     gae2,
-    in_keys=[("next", "done"), ("next", "observation_vector"), "value", ("next", "reward")],
+    in_keys=[("next", "done"), ("next", "observation_vector"), "value", ("next", "reward")
     out_keys=["advantages", "returns"],
 )
 
@@ -395,17 +394,15 @@ if __name__ == "__main__":
     policy = agent_inference.get_action_and_value
     get_value = agent_inference.get_value
 
-    gae = gae_m
     # Compile policy
     if args.compile:
         policy = torch.compile(policy)
-        gae = torch.compile(gae, fullgraph=True)
+        #gae = torch.compile(gae, fullgraph=True)
         update = torch.compile(update)
 
     if args.cudagraphs:
         policy = CudaGraphModule(policy)
         gae = CudaGraphModule(gae)
-#        gae = CudaGraphModule(gae)
         update = CudaGraphModule(update)
 
     #avg_returns = deque(maxlen=20)
