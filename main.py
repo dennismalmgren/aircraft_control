@@ -106,13 +106,14 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "tanh_loc": False,
        # 'safe_tanh': False
     }
-    layer_width = 256
 
-    enc_dim = 512
-    latent_dim = 1024
+    enc_dim = 1024
+    latent_dim = 512
     softmax_dim = 8
     dynamics_dim = 512
     policy_dim = 512
+    value_dim = 512
+
     softmax_activation_kwargs = {
         "internal_dim":softmax_dim
     }
@@ -214,50 +215,30 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=ExplorationType.RANDOM,
     )
 
-    layer_width = 2048
     nbins = cfg.network.nbins
     Vmin = cfg.network.vmin
     Vmax = cfg.network.vmax
     support = torch.linspace(Vmin, Vmax, nbins)
 
-    value_mlp_1 = MLP(
-        in_features=latent_dim, #+ num_fourier_features * 5 - 5,
+    value_net = MLP(
+        in_features=latent_dim, 
         activation_class=torch.nn.Mish,
-        out_features=layer_width,  # predict only loc
-        num_cells=[layer_width],
-        activate_last_layer=True
-    )
-
-    for layer in value_mlp_1.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.7)
-            layer.bias.data.zero_()
-
-    value_mlp_2 = MLP(
-        in_features=layer_width, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Mish,
-        out_features=nbins,  # predict only loc
-        num_cells=[layer_width, layer_width],
-        norm_class=torch.nn.LayerNorm,
+        out_features=nbins,  
+        num_cells=[value_dim, value_dim],
         norm_kwargs=[{"elementwise_affine": False,
-                    "normalized_shape": hidden_size} for hidden_size in [layer_width, layer_width]],
+                    "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
     )
 
-    for layer in value_mlp_2.modules():
+    for layer in value_net.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
-
-    value_mlp = torch.nn.Sequential(
-        value_mlp_1,
-        value_mlp_2,
-    )
 
     in_keys = ["observation_encoded"]
     value_module_1 = TensorDictModule(
         in_keys=in_keys,
         out_keys=["state_value_logits"],
-        module=value_mlp,
+        module=value_net,
     )
     support_network = SupportOperator(support)
     value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
@@ -515,7 +496,7 @@ def main(cfg: DictConfig):
                 critic_optim.zero_grad()                
                 consistency_critic.backward()
                 consistency_grad_norm = torch.nn.utils.clip_grad_norm_(list(encoder_module.parameters())
-                                                                        + list(dynamics_module.parameters()), cfg_max_grad_norm)
+                                                                        + list(dynamics_module.parameters()), cfg_max_grad_norm * 2)
                 critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
                 critic_optim.step()
                 consistency_optim.step()
