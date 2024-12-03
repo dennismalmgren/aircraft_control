@@ -84,7 +84,7 @@ class JSBSimControlEnv(EnvBase):
         #note that throttle is 0->1 in sim.
         #aileron, elevator, rudder, throttle
         self.action_spec = Bounded(low = torch.tensor([-1.0, -1.0, -1.0, 0.0]),
-                                   high = torch.tensor([1.0, 0.44, 1.0, 2.0]),
+                                   high = torch.tensor([1.0, 1.0, 1.0, 2.0]),
                                    device=device,
                                    dtype=torch.float32)
         
@@ -152,19 +152,20 @@ class JSBSimControlEnv(EnvBase):
             if self._tolerance_altitude is not None:
                 alt_error = max(0, abs(alt_error) - self._tolerance_altitude)
             alt_reward = math.exp(-((alt_error / alt_error_scale) ** 2))
+
             speed_error_scale = 0.5
             speed_error = simulator_state.velocity_mach - self._target_speed
             if self._tolerance_speed is not None:
                 speed_error = max(0, abs(speed_error) - self._tolerance_speed)
-
             speed_reward = math.exp(-((speed_error / speed_error_scale)**2))
-            heading_error_scale = math.pi/3
+
+            heading_error_scale = math.pi/2
             heading_error = self.heading_error(simulator_state.attitude_psi_rad, self._target_heading)
             if self._tolerance_heading is not None:
                 heading_error = max(0, abs(heading_error) - self._tolerance_heading)
-
             heading_reward = math.exp(-((heading_error / heading_error_scale)**2))
             task_reward = math.pow(alt_reward * speed_reward * heading_reward, 1/3)
+            
             if math.isclose(task_reward, 1.0):
                 smoothness_p_scale = 0.1
                 smoothness_p_reward = math.exp(-((simulator_state.acceleration_pdot_rad_sec2 / smoothness_p_scale)**2))

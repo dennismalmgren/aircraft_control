@@ -221,8 +221,8 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     support = torch.linspace(Vmin, Vmax, nbins)
 
     value_mlp_1 = MLP(
-        in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
+        in_features=latent_dim, #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Mish,
         out_features=layer_width,  # predict only loc
         num_cells=[layer_width],
         activate_last_layer=True
@@ -230,12 +230,12 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
 
     for layer in value_mlp_1.modules():
         if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
     value_mlp_2 = MLP(
         in_features=layer_width, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
+        activation_class=torch.nn.Mish,
         out_features=nbins,  # predict only loc
         num_cells=[layer_width, layer_width],
         norm_class=torch.nn.LayerNorm,
@@ -245,7 +245,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
 
     for layer in value_mlp_2.modules():
         if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
     value_mlp = torch.nn.Sequential(
@@ -253,7 +253,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         value_mlp_2,
     )
 
-    in_keys = ["observation_vector"]
+    in_keys = ["observation_encoded"]
     value_module_1 = TensorDictModule(
         in_keys=in_keys,
         out_keys=["state_value_logits"],
@@ -492,6 +492,10 @@ def main(cfg: DictConfig):
             # Compute GAE
 
             with torch.no_grad():
+                next_step = data["next"]
+                encoder_module(data)
+                encoder_module(next_step)
+                data["next"] = next_step
                 data = adv_module(data)
             data_extend = data.reshape(-1)
             data_buffer.extend(data_extend)
@@ -505,20 +509,23 @@ def main(cfg: DictConfig):
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
                 consistency_loss = loss["loss_consistency"] * 20
+                consistency_critic = consistency_loss + critic_loss
+
                 consistency_optim.zero_grad()
-                consistency_loss.backward()
+                critic_optim.zero_grad()                
+                consistency_critic.backward()
                 consistency_grad_norm = torch.nn.utils.clip_grad_norm_(list(encoder_module.parameters())
                                                                         + list(dynamics_module.parameters()), cfg_max_grad_norm)
+                critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
+                critic_optim.step()
                 consistency_optim.step()
 
                 actor_optim.zero_grad()
                 actor_loss.backward()
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy_module.parameters(), cfg_max_grad_norm)
                 actor_optim.step()
-                critic_optim.zero_grad()
-                critic_loss.backward()
-                critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
-                critic_optim.step()
+
+                #critic_loss.backward()
                 norms[j, k] = TensorDict({
                     "actor_grad_norm": actor_grad_norm,
                     "critic_grad_norm": critic_grad_norm,
