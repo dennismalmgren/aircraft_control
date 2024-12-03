@@ -294,6 +294,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         consistency_loss = torch.nn.functional.mse_loss(tensordict["next_observation_predicted"], tensordict["observation_encoded"], reduction="none")
         td_out.set("loss_consistency", consistency_loss)
         tensordict["observation_vector"] = tensordict["prev_observation_vector"]
+        tensordict["observation_encoded"] = tensordict["prev_observation_encoded"]
         if self.entropy_bonus:
             entropy = self.get_entropy_bonus(dist)
             td_out.set("entropy", entropy.detach().mean())  # for logging
