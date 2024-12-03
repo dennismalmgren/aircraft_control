@@ -84,7 +84,7 @@ class JSBSimControlEnv(EnvBase):
         #note that throttle is 0->1 in sim.
         #aileron, elevator, rudder, throttle
         self.action_spec = Bounded(low = torch.tensor([-1.0, -1.0, -1.0, 0.0]),
-                                   high = torch.tensor([1.0, 1.0, 1.0, 2.0]),
+                                   high = torch.tensor([1.0, 0.44, 1.0, 2.0]),
                                    device=device,
                                    dtype=torch.float32)
         
@@ -113,7 +113,7 @@ class JSBSimControlEnv(EnvBase):
             max_long_gc_deg = 20.0,
             min_altitude = 1000.0,
             max_altitude = 10000.0,
-            min_speed = 100.0,
+            min_speed = 120.0,
             max_speed = 365.0,
             min_heading = 0.0,
             max_heading = 360.0
@@ -158,7 +158,7 @@ class JSBSimControlEnv(EnvBase):
                 speed_error = max(0, abs(speed_error) - self._tolerance_speed)
 
             speed_reward = math.exp(-((speed_error / speed_error_scale)**2))
-            heading_error_scale = math.pi/2
+            heading_error_scale = math.pi/3
             heading_error = self.heading_error(simulator_state.attitude_psi_rad, self._target_heading)
             if self._tolerance_heading is not None:
                 heading_error = max(0, abs(heading_error) - self._tolerance_heading)
@@ -167,11 +167,11 @@ class JSBSimControlEnv(EnvBase):
             task_reward = math.pow(alt_reward * speed_reward * heading_reward, 1/3)
             if math.isclose(task_reward, 1.0):
                 smoothness_p_scale = 0.1
-                smoothness_p_reward = math.exp(-((simulator_state.velocity_p_rad_sec / smoothness_p_scale)**2))
+                smoothness_p_reward = math.exp(-((simulator_state.acceleration_pdot_rad_sec2 / smoothness_p_scale)**2))
                 smoothness_q_scale = 0.1
-                smoothness_q_reward = math.exp(-((simulator_state.velocity_q_rad_sec / smoothness_q_scale)**2))
+                smoothness_q_reward = math.exp(-((simulator_state.acceleration_qdot_rad_sec2 / smoothness_q_scale)**2))
                 smoothness_r_scale = 0.1
-                smoothness_r_reward = math.exp(-((simulator_state.velocity_r_rad_sec / smoothness_r_scale)**2))
+                smoothness_r_reward = math.exp(-((simulator_state.acceleration_rdot_rad_sec2 / smoothness_r_scale)**2))
                 smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward, 1/3)
             total_reward = task_reward + smoothness_reward
 
@@ -261,7 +261,7 @@ class JSBSimControlEnv(EnvBase):
         self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
         self._tolerance_altitude = 100
         self._target_speed = simulator_state.velocity_mach #speed up a little
-        self._tolerance_speed = 0.1
+        self._tolerance_speed = 0.2
         self._target_heading = simulator_state.attitude_psi_rad
         self._tolerance_heading = 5 * torch.pi / 180 #three degrees
         self._add_observations(simulator_state, td_out)
