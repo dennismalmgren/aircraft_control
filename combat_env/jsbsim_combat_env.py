@@ -1,4 +1,4 @@
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Dict
 from dataclasses import dataclass
 import os
 import math
@@ -20,6 +20,9 @@ from torchrl.data.tensor_specs import (
     Unbounded,
 )
 from tensordict import TensorDict, TensorDictBase
+from torchrl.envs import MarlGroupMapType
+from tensordict.utils import NestedKey
+
 
 from jsbsim_interface import AircraftJSBSimSimulator, AircraftSimulatorConfig, AircraftJSBSimInitialConditions, SimulatorState
 from curriculum.curriculum_manager_jsbsim import CurriculumManagerJsbSim
@@ -40,84 +43,104 @@ class JSBSimCombatEnv(EnvBase):
                  run_type_checks: bool = False,
                  allow_done_after_reset: bool = False):
         super().__init__(device=device, batch_size=batch_size, run_type_checks=run_type_checks, allow_done_after_reset=allow_done_after_reset)
-        self.uid = ["player_0", "player_1"]
+        self.agents = {
+            0: "player_0",
+            1: "player_1"
+        }
+        self.agent_names: List[str] = ["player_0","player_1"]
+        self.agent_names_to_indices_map = {
+            "player_0": 0,
+            "player_1": 1
+        }
+        self.group_map = MarlGroupMapType.ONE_GROUP_PER_AGENT.get_group_map(self.agent_names)
+        action_spec = Composite(device=self.device)
+        observation_spec = Composite(device=self.device)
+        reward_spec = Composite(device=self.device)
+        done_spec = Composite(device=self.device)
 
         config = AircraftSimulatorConfig(jsbsim_module_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '../py_modules/JSBSim'))
-        self.aircraft_simulators = [AircraftJSBSimSimulator(config)] * 2
-        # Placeholders
-        aircraft_missile_count = 4
+        self.aircraft_simulators = [AircraftJSBSimSimulator(config) for name in self.agent_names]
+        for group in self.group_map.keys():
 
-        self.observation_spec = Composite(
-            u = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            w = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            mach = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            udot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            vdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            wdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            phi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            theta = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
-            psi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            p = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            q = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            r = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            pdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            qdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            rdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            lat = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            lon = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            alt = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v_north = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v_east = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v_down = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            air_density = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            speed_of_sound = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            crosswind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            headwind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            true_airspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32),
+            # Placeholders
+            aircraft_missile_count = 4
+            observation_spec_single = Composite(
+                u = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                v = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                w = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                mach = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                udot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                vdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                wdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                phi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                theta = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
+                psi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                p = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                q = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                r = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                pdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                qdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                rdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                lat = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                lon = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                alt = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                v_north = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                v_east = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                v_down = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                air_density = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                speed_of_sound = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                crosswind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                headwind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                true_airspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32),
 
-            #ownship
-            available_missiles = Unbounded(shape=(1,), device=device, dtype=torch.int32),
-            own_missile_locations = Unbounded(shape=(aircraft_missile_count, 3,), device=device, dtype=torch.float32),
-            own_missile_velocities = Unbounded(shape=(aircraft_missile_count, 3, ), device=device, dtype=torch.float32),
-            active_own_missile_masks = Unbounded(shape=(aircraft_missile_count, 1,), device=device, dtype=torch.bool),
+                #ownship
+                available_missiles = Unbounded(shape=(1,), device=device, dtype=torch.int32),
+                own_missile_locations = Unbounded(shape=(aircraft_missile_count, 3,), device=device, dtype=torch.float32),
+                own_missile_velocities = Unbounded(shape=(aircraft_missile_count, 3, ), device=device, dtype=torch.float32),
+                active_own_missile_masks = Unbounded(shape=(aircraft_missile_count, 1,), device=device, dtype=torch.bool),
 
-            #sensors
-            opponent_location = Unbounded(shape=(3,), device=device, dtype=torch.float32),
-            opponent_velocity = Unbounded(shape=(3,), device=device, dtype=torch.float32),
-            opponent_information_quality = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            missile_location = Unbounded(shape=(aircraft_missile_count, 3,), device=device, dtype=torch.float32),
-            missile_velocity = Unbounded(shape=(aircraft_missile_count, 3,), device=device, dtype=torch.float32),
-            active_missile_masks = Unbounded(shape=(aircraft_missile_count, 1,), device=device, dtype=torch.bool),
-        )
+                #sensors
+                opponent_location = Unbounded(shape=(3,), device=device, dtype=torch.float32),
+                opponent_velocity = Unbounded(shape=(3,), device=device, dtype=torch.float32),
+                opponent_information_quality = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+                missile_location = Unbounded(shape=(aircraft_missile_count, 3,), device=device, dtype=torch.float32),
+                missile_velocity = Unbounded(shape=(aircraft_missile_count, 3,), device=device, dtype=torch.float32),
+                active_missile_masks = Unbounded(shape=(aircraft_missile_count, 1,), device=device, dtype=torch.bool),
+            )
+            group_observation_spec = torch.stack([observation_spec_single], dim=0)
 
-        #note that throttle is 0->1 in sim.
-        #aileron, elevator, rudder, throttle
-        self.action_spec = Bounded(low = torch.tensor([-1.0, -1.0, -1.0, 0.0]),
-                                   high = torch.tensor([1.0, 1.0, 1.0, 2.0]),
-                                   device=device,
-                                   dtype=torch.float32)
-        
-        self.done_spec = Composite(
+            #aileron, elevator, rudder, throttle
+            action_spec_single = Composite(
+                                    control=Bounded(low = torch.tensor([-1.0, -1.0, -1.0, 0.0]),
+                                    high = torch.tensor([1.0, 1.0, 1.0, 2.0]),
+                                    device=device,
+                                    dtype=torch.float32),
+                                    fire=Categorical(n=2,
+                                                    device=device))
+            group_action_spec = torch.stack([action_spec_single], dim=0)
+
+            group_done_spec = Composite(
                             terminated=Categorical(shape=(1,), n=2, device=device, dtype=torch.bool),
                             truncated=Categorical(shape=(1,), n=2, device=device, dtype=torch.bool),
                             done=Categorical(shape=(1,), n=2, device=device, dtype=torch.bool),
                         )
-        self.reward_spec = Composite(
-            reward = Unbounded(shape=(1,), device=device, dtype=torch.float32), #start with the one.
-            task_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            smoothness_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-        )
-        self.state_spec = self.observation_spec.clone()
+            
+            reward_spec_single = Composite(
+                reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            )
+            group_reward_spec = torch.stack([reward_spec_single], dim=0)
 
-        self._target_altitude = None
-        self._target_speed = None
-        self._target_heading = None
-        self._tolerance_altitude = None
-        self._tolerance_speed = None
-        self._tolerance_heading = None
+            action_spec[group] = group_action_spec
+            observation_spec[group] = group_observation_spec
+            reward_spec[group] = group_reward_spec
+            done_spec[group] = group_done_spec
+
+        self.action_spec = action_spec
+        self.observation_spec = observation_spec
+        self.reward_spec = reward_spec
+        self.state_spec = self.observation_spec.clone()
         self.curriculum_manager = CurriculumManagerJsbSim(
             min_lat_geod_deg = 57.0,
             max_lat_geod_deg = 60.0,
@@ -131,6 +154,20 @@ class JSBSimCombatEnv(EnvBase):
             max_heading = 360.0
         )
 
+    @property
+    def reward_keys(self) -> List[NestedKey]:
+        return [("player_0", "reward"), ("player_1", "reward")]
+    
+    @property
+    def action_keys(self) -> List[NestedKey]:
+        return [("player_0", "action"), ("player_1", "action")]
+    
+    @property
+    def done_keys(self) -> List[NestedKey]:
+        return [("player_0", "done"), ("player_1", "done"),
+                ("player_0", "terminated"), ("player_1", "terminated"),
+                ("player_0", "truncated"), ("player_1", "truncated"),]
+    
     def heading_error(self, theta1, theta2):
         """
         Calculate the shortest heading error between two angles (in radians).
@@ -197,7 +234,7 @@ class JSBSimCombatEnv(EnvBase):
         else:
             return False
     
-    def _add_done_flags(self, simulator_state: SimulatorState, tensordict: TensorDict):
+    def _add_done_flags(self, simulator_states: List[SimulatorState], tensordict: TensorDict):
         terminated = torch.tensor([self._evaluate_terminated(simulator_state)], device=self.device)
         truncated = torch.tensor([False], device=self.device)
         tensordict.set("terminated", terminated)
@@ -264,21 +301,26 @@ class JSBSimCombatEnv(EnvBase):
             td_out = tensordict.clone().empty()
         else:
             td_out = TensorDict({}, batch_size=self.batch_size, device=self.device)
-        if "aircraft_ic" in kwargs:
-            aircraft_ic = kwargs["aircraft_ic"]
-        else:
-            aircraft_ic = self.curriculum_manager.get_initial_conditions()
+        # if "aircraft_ic" in kwargs:
+        #     aircraft_ic = kwargs["aircraft_ic"]
+        # else:
+        aircraft_ic_list = [self.curriculum_manager.get_initial_conditions() for _ in self.agent_names]
+
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
-        simulator_state = self.aircraft_simulator.reset(aircraft_ic)
-        self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
-        self._tolerance_altitude = 40
-        self._target_speed = simulator_state.velocity_mach #speed up a little
-        self._tolerance_speed = 0.05
-        self._target_heading = simulator_state.attitude_psi_rad
-        self._tolerance_heading = 3 * torch.pi / 180 #three degrees
-        self._add_observations(simulator_state, td_out)
+        aircraft_simulator_states = []
+        for aircraft_ic, aircraft_simulator in zip(aircraft_ic_list, self.aircraft_simulators):
+            aircraft_simulator_state = aircraft_simulator.reset(aircraft_ic)
+            aircraft_simulator_states.append(aircraft_simulator_state)
+
+        #self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
+        #self._tolerance_altitude = 40
+        #self._target_speed = simulator_state.velocity_mach #speed up a little
+        #self._tolerance_speed = 0.05
+        #self._target_heading = simulator_state.attitude_psi_rad
+        #self._tolerance_heading = 3 * torch.pi / 180 #three degrees
+        self._add_observations(aircraft_simulator_states, td_out)
         self._add_last_action(primer_action, td_out)
-        self._add_done_flags(simulator_state, td_out)
+        self._add_done_flags(aircraft_simulator_states, td_out)
 
         return td_out
     
