@@ -52,7 +52,7 @@ from transforms.angular_difference_transform import AngularDifference
 from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
 
 from hgauss.support_operator import SupportOperator
-from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
+from hgauss.objectives.cliphgauss_worldmodel_ppo_loss import ClipHGaussWorldModelPPOLoss
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -83,9 +83,9 @@ class SoftmaxLayer(torch.nn.Module):
 
     def forward(self, x):
         x_shape = x.shape
-        x = x.view(*x_shape[:-1], self.internal_dim, -1)
+        x = x.view(*x_shape[:-1], -1, self.internal_dim)
         x = torch.softmax(x, dim=-1)
-        return torch.clamp(x, self.vmin, self.vmax)
+        return x.view(x_shape)    
     
 class ClampOperator(torch.nn.Module):
     def __init__(self, vmin, vmax):
@@ -108,64 +108,93 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     }
     layer_width = 256
 
-    policy_mlp_1 = MLP(
+    enc_dim = 512
+    latent_dim = 1024
+    softmax_dim = 8
+    dynamics_dim = 512
+    policy_dim = 512
+    softmax_activation_kwargs = {
+        "internal_dim":softmax_dim
+    }
+    encoder_net = MLP(
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Mish,
-        out_features=layer_width,  # predict only loc
-        num_cells=[layer_width],
+        activation_class=SoftmaxLayer,
+        activation_kwargs=softmax_activation_kwargs,
+        out_features=latent_dim,  # predict only loc
+        num_cells=[enc_dim, latent_dim],
         activate_last_layer=True,
-        #norm_class=torch.nn.LayerNorm,
-        #norm_kwargs=[{"elementwise_affine": False,
-       #              "normalized_shape": hidden_size} for hidden_size in [512]],
-    )
-
-    # Initialize policy weights
-    for layer in policy_mlp_1.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.7)
-            layer.bias.data.zero_()
-
-
-    # policy_mlp_2 = MLP(
-    #     in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-    #     activation_class=torch.nn.Tanh,
-    #     out_features=num_outputs,  # predict only loc
-    #     num_cells=[layer_width,layer_width, layer_width],
-    #     norm_class=torch.nn.LayerNorm,
-    #     norm_kwargs=[{"elementwise_affine": False,
-    #                  "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width, layer_width]],
-    # )
-        
-    policy_mlp_2 = MLP(
-        in_features=layer_width, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Mish,
-        out_features=num_outputs,  # predict only loc
-        num_cells=[layer_width,layer_width],
         norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
-                     "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width]],
+                    "normalized_shape": hidden_size} for hidden_size in [enc_dim, latent_dim, latent_dim]],
     )
-    # Initialize policy weights
-    for layer in policy_mlp_2.modules():
+
+    dynamics_net = MLP(
+        in_features=latent_dim + num_outputs,
+        activation_class=SoftmaxLayer,
+        activation_kwargs=softmax_activation_kwargs,
+        out_features=latent_dim,
+        num_cells=[dynamics_dim, dynamics_dim],
+        activate_last_layer=True,
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [dynamics_dim, dynamics_dim, latent_dim]],
+    )
+
+    policy_net = MLP(
+        in_features=latent_dim,
+        activation_class=torch.nn.Mish,
+        out_features=num_outputs,
+        num_cells=[policy_dim, policy_dim],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [policy_dim, policy_dim]],
+    )
+
+    # Initialize weights
+    for layer in encoder_net.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
-    clamp_operator = ClampOperator(-10, 10)
 
-    policy_mlp = torch.nn.Sequential(
-        policy_mlp_1,
-        policy_mlp_2,
-        clamp_operator,
+    for layer in dynamics_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+
+    for layer in policy_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+    
+    policy_net = torch.nn.Sequential(
+        policy_net,
         AddStateIndependentNormalScale(
             action_spec.shape[-1], scale_lb=1e-8
         ),
     )
-    
-    policy_module = ProbabilisticActor(
-        TensorDictModule(
-            module=policy_mlp,
-            in_keys=["observation_vector"],
-            out_keys=["loc", "scale"],
+
+    encoder_module = TensorDictModule(
+        module=encoder_net,
+        in_keys=["observation_vector"],
+        out_keys=["observation_encoded"]
+    )
+
+    dynamics_module = TensorDictModule(
+        module=dynamics_net,
+        in_keys=["observation_encoded", "action"],
+        out_keys=["next_observation_predicted"]
+    )
+
+    policy_module = TensorDictModule(
+        module=policy_net,
+        in_keys=["observation_encoded"],
+        out_keys=["loc", "scale"]
+    )
+
+    actor_module = ProbabilisticActor(
+        module=TensorDictSequential(
+            encoder_module,
+            policy_module
         ),
         in_keys=["loc", "scale"],
         spec=Composite(action=action_spec),
@@ -175,59 +204,72 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=ExplorationType.RANDOM,
     )
 
-    if cfg.ppo.loss_critic_type == "hgauss":
-        layer_width = 2048
-        nbins = cfg.network.nbins
-        Vmin = cfg.network.vmin
-        Vmax = cfg.network.vmax
-        support = torch.linspace(Vmin, Vmax, nbins)
+    learning_actor_module = ProbabilisticActor(
+        module=policy_module,
+        in_keys=["loc", "scale"],
+        spec=Composite(action=action_spec),
+        distribution_class=distribution_class,
+        distribution_kwargs=distribution_kwargs,
+        return_log_prob=True,
+        default_interaction_type=ExplorationType.RANDOM,
+    )
 
-        value_mlp_1 = MLP(
-            in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=layer_width,  # predict only loc
-            num_cells=[layer_width],
-            activate_last_layer=True
-        )
+    layer_width = 2048
+    nbins = cfg.network.nbins
+    Vmin = cfg.network.vmin
+    Vmax = cfg.network.vmax
+    support = torch.linspace(Vmin, Vmax, nbins)
 
-        for layer in value_mlp_1.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 1.0)
-                layer.bias.data.zero_()
+    value_mlp_1 = MLP(
+        in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Tanh,
+        out_features=layer_width,  # predict only loc
+        num_cells=[layer_width],
+        activate_last_layer=True
+    )
 
-        value_mlp_2 = MLP(
-            in_features=layer_width, #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=nbins,  # predict only loc
-            num_cells=[layer_width, layer_width],
-            norm_class=torch.nn.LayerNorm,
-            norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [layer_width, layer_width]],
-        )
+    for layer in value_mlp_1.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            layer.bias.data.zero_()
 
-        for layer in value_mlp_2.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 1.0)
-                layer.bias.data.zero_()
+    value_mlp_2 = MLP(
+        in_features=layer_width, #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Tanh,
+        out_features=nbins,  # predict only loc
+        num_cells=[layer_width, layer_width],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [layer_width, layer_width]],
+    )
 
-        value_mlp = torch.nn.Sequential(
-            value_mlp_1,
-            value_mlp_2,
-        )
+    for layer in value_mlp_2.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            layer.bias.data.zero_()
 
-        in_keys = ["observation_vector"]
-        value_module_1 = TensorDictModule(
-            in_keys=in_keys,
-            out_keys=["state_value_logits"],
-            module=value_mlp,
-        )
-        support_network = SupportOperator(support)
-        value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
-        value_module = TensorDictSequential(value_module_1, value_module_2)
-        support = support.to(device)
-        policy_module = policy_module.to(device)
-        value_module = value_module.to(device)
-        return policy_module, value_module, support
+    value_mlp = torch.nn.Sequential(
+        value_mlp_1,
+        value_mlp_2,
+    )
+
+    in_keys = ["observation_vector"]
+    value_module_1 = TensorDictModule(
+        in_keys=in_keys,
+        out_keys=["state_value_logits"],
+        module=value_mlp,
+    )
+    support_network = SupportOperator(support)
+    value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
+    value_module = TensorDictSequential(value_module_1, value_module_2)
+    actor_module = actor_module.to(device)
+    value_module = value_module.to(device)
+    support = support.to(device)
+    encoder_module = encoder_module.to(device)
+    dynamics_module = dynamics_module.to(device)
+    policy_module = policy_module.to(device)
+    learning_actor_module = learning_actor_module.to(device)
+    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module
 
 
 
@@ -319,43 +361,31 @@ def main(cfg: DictConfig):
 
     template_env = make_environment()
     #test_td = template_env.reset()
-    if cfg.ppo.loss_critic_type == "l2":
-        policy_module, value_module, policy_parameters = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-        loss_module = ClipPPOLoss(
-            actor_network=policy_module,
-            critic_network=value_module,
-            clip_epsilon=cfg.ppo.clip_epsilon,
-            loss_critic_type=cfg.ppo.loss_critic_type,
-            entropy_coef=cfg.ppo.entropy_coef,
-            normalize_advantage= True
-        )
-    elif cfg.ppo.loss_critic_type == "hgauss":
-        policy_module, value_module, support = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-        loss_module = ClipHGaussPPOLoss(
-            actor_network=policy_module,
-            critic_network=value_module,
-            clip_epsilon=cfg.ppo.clip_epsilon,
-            loss_critic_type=cfg.ppo.loss_critic_type,
-            entropy_coef=cfg.ppo.entropy_coef,
-            normalize_advantage= False,
-            support=support
-        )
+
+    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module = \
+        make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+    loss_module = ClipHGaussWorldModelPPOLoss(
+        actor_network=learning_actor_module,
+        critic_network=value_module,
+        encoder_network=encoder_module,
+        dynamics_network=dynamics_module,
+        clip_epsilon=cfg.ppo.clip_epsilon,
+        loss_critic_type=cfg.ppo.loss_critic_type,
+        entropy_coef=cfg.ppo.entropy_coef,
+        normalize_advantage= False,
+        support=support
+    )
 
     adv_module = GAE(
         gamma=cfg.ppo.gamma,
         lmbda=cfg.ppo.gae_lambda,
         value_network=value_module,
     )
-    #if use_torch_compile:
-    #    torch.set_float32_matmul_precision('high')
-    #    loss_module = torch.compile(loss_module)
-        #adv_module = torch.compile(adv_module)
-        #policy_module = torch.compile(policy_module)
-        #value_module = torch.compile(value_module)
 
     actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
-
+    consistency_optim = torch.optim.AdamW(list(encoder_module.parameters()) + 
+                                          list(dynamics_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     collected_frames = 0
     cfg_logger_save_interval = cfg.logger.save_interval
     loaded_frames = 0
@@ -383,7 +413,7 @@ def main(cfg: DictConfig):
     # Create collector
     collector = SyncDataCollector(
         create_env_fn=env_maker(cfg),
-        policy=policy_module,
+        policy=actor_module,
         frames_per_batch=cfg.collector.frames_per_batch,
         total_frames=frames_remaining,
         device=device,
@@ -450,12 +480,13 @@ def main(cfg: DictConfig):
                     }
                 )
         data = data.select("observation_vector", 
+                           "observation_encoded",
                            "action", 
                            "sample_log_prob",
                            ("next", "reward"), 
                            ("next", "terminated"), 
                            ("next","done"), 
-                           ("next", "observation_vector"))
+                           ("next", "observation_vector"),)
         training_start = time.time()
         for j in range(cfg_loss_ppo_epochs):
             # Compute GAE
@@ -469,10 +500,16 @@ def main(cfg: DictConfig):
                 batch = batch.to(device)
                 loss = loss_module(batch)
                 losses[j, k] = loss.select(
-                    "loss_critic", "loss_entropy", "loss_objective"
+                    "loss_critic", "loss_entropy", "loss_objective", "loss_consistency"
                 ).detach()
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
+                consistency_loss = loss["loss_consistency"] * 20
+                consistency_optim.zero_grad()
+                consistency_loss.backward()
+                consistency_grad_norm = torch.nn.utils.clip_grad_norm_(list(encoder_module.parameters())
+                                                                        + list(dynamics_module.parameters()), cfg_max_grad_norm)
+                consistency_optim.step()
 
                 actor_optim.zero_grad()
                 actor_loss.backward()
@@ -485,6 +522,7 @@ def main(cfg: DictConfig):
                 norms[j, k] = TensorDict({
                     "actor_grad_norm": actor_grad_norm,
                     "critic_grad_norm": critic_grad_norm,
+                    "consistency_grad_norm": consistency_grad_norm
                 })
 
          # Get training losses and times
