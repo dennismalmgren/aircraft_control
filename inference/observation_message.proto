@@ -1,0 +1,35 @@
+syntax = "proto3";  // Specify Protobuf version
+
+message ObservationMessage {
+    float X = 1;            // RT90?
+    float Y = 2;           // RT90?
+    float Z = 3;           // RT90?
+    float v_aex = 4;      // System 5 X rel. air
+    float v_aey = 5;       // System 5 Y rel. air
+    float v_aez = 6;       // System 5 Z rel. air
+
+    float v_ex = 7;         // System 2 X rel. ground
+    float v_ey = 8;         // System 2 Y rel. ground
+    float v_ez = 9;         // System 2 Z rel. ground
+
+    float a_ex = 10;         // System 2 acc X NED
+    float a_ey = 11;         // System 2 acc Y NED
+    float a_ez = 12;         // System 2 acc Z NED
+    
+    float my = 13;           // Bank angle
+    float gamma = 14;        // Flight path angle
+    float chi = 15;         // Course angle
+    float alpha = 16;       // AoA
+    float beta = 17;        // Sideslip
+
+    float v_x = 18;          // System 5 X rel. air
+    float v_y = 19;          // System 5 Y rel. air
+    float v_z = 20;         // System 5 Z rel. air
+    float mach = 21;        // Mach @ current altitude
+    float psi = 22; 
+    float theta = 23;
+    float phi = 24;
+    float pdot = 25;
+    float qdot = 26;
+    float rdot = 27;
+}   

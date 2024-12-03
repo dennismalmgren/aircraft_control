@@ -1,5 +1,5 @@
 def test_reset_control_env():
-    from control_env.torchrl_control_env import JSBSimControlEnv
+    from control_env.jsbsim_control_env import JSBSimControlEnv
 
     env = JSBSimControlEnv()
     td_reset = env.reset()

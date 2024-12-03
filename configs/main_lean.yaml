@@ -1,0 +1,72 @@
+hydra:
+  job:
+    chdir: True
+
+random:
+  seed: 1234
+
+device: cuda:0
+
+# Logger
+logger:
+  backend: wandb
+  mode: online
+  exp_name: aircraft_control_cosine_sine_goal
+  project: aircraft_control
+  test_interval: 100_000
+  save_interval: 100_000
+  num_test_episodes: 5
+
+# collector
+collector:
+  total_frames: 40_000_000
+  frames_per_batch: 40_000 #max_episode_steps * env_per_collector
+  #frames_per_batch: 2_000 #max_episode_steps * env_per_collector
+  device: cpu
+  env_per_collector: 20
+  #env_per_collector: 1
+
+ppo:
+  gae_lambda: 0.95
+  gamma: 0.995
+  clip_epsilon: 0.2
+  entropy_coef: 0.0
+  epochs: 10
+  loss_critic_type: hgauss #l2, hgauss
+  normalize_advantage: true
+  clip_value_loss: false
+
+
+network:
+  nbins: 101
+  vmin: -100
+  vmax: 500
+
+optim:
+  lr_policy: 3.0e-4
+  lr_value: 3.0e-3
+  weight_decay: 0.0
+  #mini_batch_size: 2000
+  mini_batch_size: 8000
+  max_grad_norm: 10.0
+  anneal_lr: false
+  anneal_clip_epsilon: false
+  eps: 1.0e-4
+
+use_torch_compile: true
+use_cudagraphs: true
+
+#temp properties
+num_envs: 20
+num_steps: 2000
+num_minibatches: 5
+total_timesteps: 1000000
+torch_deterministic: true
+
+
+#placeholders
+minibatch_size: 0
+batch_size: 0
+num_iterations: 0
+
+
