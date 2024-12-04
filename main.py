@@ -107,7 +107,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
        # 'safe_tanh': False
     }
 
-    enc_dim = 1024
+    enc_dim = 4096
     latent_dim = 512
     softmax_dim = 8
     dynamics_dim = 512
@@ -276,7 +276,7 @@ def apply_env_transforms(env):
             CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
                                 "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
-            CatFrames(N=10, dim=-1, in_keys=["observation_vector"]),
+            CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
             EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
         )
