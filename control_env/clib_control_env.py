@@ -37,7 +37,7 @@ class CLibControlEnv(EnvBase):
         super().__init__(device=device, batch_size=batch_size, run_type_checks=run_type_checks, allow_done_after_reset=allow_done_after_reset)
         self.uid = "A0100"
 
-        config = AircraftSimulatorConfig(jsbsim_module_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '../py_modules/JSBSim'))
+        config = AircraftSimulatorConfig()
         self.aircraft_simulator = AircraftCLibSimulator(config)
 
         self.observation_spec = Composite(
@@ -69,8 +69,9 @@ class CLibControlEnv(EnvBase):
             headwind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             true_airspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            # I add these
             last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32),
-            #goals
+            # Goals
             target_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
             target_speed = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
             target_heading = Unbounded(shape=(1,), device=device, dtype=torch.float32), 

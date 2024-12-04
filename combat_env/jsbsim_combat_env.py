@@ -235,7 +235,10 @@ class JSBSimCombatEnv(EnvBase):
             return False
     
     def _add_done_flags(self, simulator_states: List[SimulatorState], tensordict: TensorDict):
-        terminated = torch.tensor([self._evaluate_terminated(simulator_state)], device=self.device)
+        terminated = self._evaluate_terminated(simulator_states)
+        
+        for i, agent_name in self.agent_names:
+            terminated = torch.tensor([self._evaluate_terminated(simulator_states)], device=self.device)
         truncated = torch.tensor([False], device=self.device)
         tensordict.set("terminated", terminated)
         tensordict.set("truncated", truncated)

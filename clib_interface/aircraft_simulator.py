@@ -11,6 +11,7 @@ class AircraftSimulatorConfig:
 
 @dataclass
 class SimulatorState:
+    # TODO: Merge with api
     position_x_relative_m: float
     position_y_relative_m: float
     position_z_relative_m: float
@@ -19,7 +20,7 @@ class SimulatorState:
     velocity_east_m_sec: float
     velocity_down_m_sec: float
     velocity_mach: float
-    
+
     acceleration_udot_m_sec2: float
     acceleration_vdot_m_sec2: float
     acceleration_wdot_m_sec2: float
@@ -44,20 +45,16 @@ class SimulatorState:
 
 @dataclass
 class AircraftCLibInitialConditions:
-    long_gc_deg: float = 120.0 # geocentric longitude [deg]
-    lat_geod_deg: float = 60.0  # geodetic latitude  [deg]
-    h_sl_ft: float = 6000      # altitude above mean sea level [ft]
-    psi_true_deg: float = 0.0   # initial (true) heading [deg] (0, 360)
+    x_rt90: float = 120.0 # geocentric longitude [deg]
+    y_rt90: float = 60.0  # geodetic latitude  [deg]
+    z_rt90: float = 6000      # altitude above mean sea level [ft]
+    psi_deg: float = 0.0   # initial (true) heading [deg] (0, 360)
+    #TODO: which velocities etc?
     u_fps: float = 800.0        # body frame x-axis velocity [ft/s]  (-2200, 2200)
-    v_fps: float = 0.0          # body frame y-axis velocity [ft/s]  (-2200, 2200)
-    w_fps: float = 0.0          # body frame z-axis velocity [ft/s]  (-2200, 2200)
-    p_rad_sec: float = 0.0      # roll rate  [rad/s]  (-2 * pi, 2 * pi)
-    q_rad_sec: float = 0.0      # pitch rate [rad/s]  (-2 * pi, 2 * pi)
-    r_rad_sec: float = 0.0      # yaw rate   [rad/s]  (-2 * pi, 2 * pi)
-    roc_fpm: float = 0.0        # initial rate of climb [ft/min]
-    terrain_elevation_ft: float = 0.0     # terrain elevation [ft] 
-    
+   
+
 class AircraftCLibSimulator:
+    #TODO: Revise these.
     state_properties = [
         #linear velocity
         CLibCatalog.velocities_u_fps,
