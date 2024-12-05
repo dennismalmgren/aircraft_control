@@ -71,7 +71,7 @@ class AltitudeToScaleCode(Transform):
     """
 
     def __init__(
-        self, in_keys, out_keys, add_cosine=True
+        self, in_keys, out_keys, add_cosine=True, num_wavelengths=13
     ):
         in_keys_inv = []
         out_keys_inv = copy.copy(in_keys_inv)
@@ -81,7 +81,7 @@ class AltitudeToScaleCode(Transform):
                 f"The number of in_keys ({len(self.in_keys)}) should be the number of out_keys ({len(self.in_keys)})."
             )
         self.add_cosine = add_cosine
-        self.N = 13
+        self.N = num_wavelengths
 
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
         for in_key, out_key in zip(self.in_keys, self.out_keys):
