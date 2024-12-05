@@ -177,15 +177,15 @@ class JSBSimControlEnv(EnvBase):
             task_reward = math.pow(alt_reward * speed_reward * heading_reward * roll_reward, 1/4)
 
 
-            if math.isclose(task_reward, 1.0):
-                smoothness_p_scale = 0.1
-                smoothness_p_reward = math.exp(-((simulator_state.acceleration_pdot_rad_sec2 / smoothness_p_scale)**2))
-                smoothness_q_scale = 0.1
-                smoothness_q_reward = math.exp(-((simulator_state.acceleration_qdot_rad_sec2 / smoothness_q_scale)**2))
-                smoothness_r_scale = 0.1
-                smoothness_r_reward = math.exp(-((simulator_state.acceleration_rdot_rad_sec2 / smoothness_r_scale)**2))
+            # if math.isclose(task_reward, 1.0):
+            #     smoothness_p_scale = 0.1
+            #     smoothness_p_reward = math.exp(-((simulator_state.acceleration_pdot_rad_sec2 / smoothness_p_scale)**2))
+            #     smoothness_q_scale = 0.1
+            #     smoothness_q_reward = math.exp(-((simulator_state.acceleration_qdot_rad_sec2 / smoothness_q_scale)**2))
+            #     smoothness_r_scale = 0.1
+            #     smoothness_r_reward = math.exp(-((simulator_state.acceleration_rdot_rad_sec2 / smoothness_r_scale)**2))
                 
-                smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward , 1/3)
+            #     smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward , 1/3)
 
             total_reward = task_reward + smoothness_reward
 

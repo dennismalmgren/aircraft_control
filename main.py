@@ -276,7 +276,7 @@ def apply_env_transforms(env):
             CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
                                 "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
                                     out_key="observation_vector", del_keys=False),        
-            CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
+            #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
             EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
         )
@@ -536,8 +536,11 @@ def main(cfg: DictConfig):
                 savestate = {
                         'model_actor': policy_module.state_dict(),
                         'model_critic': value_module.state_dict(),
+                        'model_dynamics': dynamics_module.state_dict(),
+                        'model_encoder': encoder_module.state_dict(),
                         'actor_optimizer': actor_optim.state_dict(),
                         'critic_optimizer': critic_optim.state_dict(),
+                        'consistency_optimizer': consistency_optim.state_dict(),
                         "collected_frames": {"collected_frames": collected_frames},
                 }
                 torch.save(savestate, f"training_snapshot_{collected_frames}.pt")
