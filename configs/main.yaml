@@ -3,10 +3,11 @@ hydra:
     chdir: True
 
 random:
-  seed: 1234
+  seed: 42
 
 device: cuda:0
 use_torch_compile: true
+num_eval_envs: 5
 
 # Logger
 logger:
@@ -16,7 +17,9 @@ logger:
   project: aircraft_control
   test_interval: 100_000
   save_interval: 1_000_000
+  eval_interval: 1_000_000
   num_test_episodes: 5
+
 
 # collector
 collector:

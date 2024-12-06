@@ -75,7 +75,27 @@ def log_trajectory(states, aircraft_uid, filename):
             f.write(f"Name=JAS 39,")
             f.write(f"Color=Red")
             f.write(f"\n")
-            
+
+
+class SoftmaxLayer(torch.nn.Module):
+    def __init__(self,  internal_dim: int):
+        super().__init__()
+        self.internal_dim = internal_dim
+
+    def forward(self, x):
+        x_shape = x.shape
+        x = x.view(*x_shape[:-1], -1, self.internal_dim)
+        x = torch.softmax(x, dim=-1)
+        return x.view(x_shape)    
+    
+class ClampOperator(torch.nn.Module):
+    def __init__(self, vmin, vmax):
+        super().__init__()
+        self.vmin = vmin
+        self.vmax = vmax
+
+    def forward(self, x):
+        return torch.clamp(x, self.vmin, self.vmax)  
 
 def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, device: torch.device):
     input_shape = observation_spec.shape
@@ -85,66 +105,98 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "min": action_spec.space.low,
         "max": action_spec.space.high,
         "tanh_loc": False,
-        'safe_tanh': True
+       # 'safe_tanh': False
     }
-    layer_width = 256
 
-    policy_mlp_1 = MLP(
+    enc_dim = 4096
+    latent_dim = 512
+    softmax_dim = 8
+    dynamics_dim = 512
+    policy_dim = 512
+    value_dim = 512
+
+    softmax_activation_kwargs = {
+        "internal_dim":softmax_dim
+    }
+    encoder_net = MLP(
         in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
-        out_features=layer_width,  # predict only loc
-        num_cells=[layer_width],
+        activation_class=SoftmaxLayer,
+        activation_kwargs=softmax_activation_kwargs,
+        out_features=latent_dim,  # predict only loc
+        num_cells=[enc_dim, latent_dim],
         activate_last_layer=True,
-        #norm_class=torch.nn.LayerNorm,
-        #norm_kwargs=[{"elementwise_affine": False,
-       #              "normalized_shape": hidden_size} for hidden_size in [512]],
-    )
-
-    # Initialize policy weights
-    for layer in policy_mlp_1.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
-            layer.bias.data.zero_()
-
-
-    # policy_mlp_2 = MLP(
-    #     in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-    #     activation_class=torch.nn.Tanh,
-    #     out_features=num_outputs,  # predict only loc
-    #     num_cells=[layer_width,layer_width, layer_width],
-    #     norm_class=torch.nn.LayerNorm,
-    #     norm_kwargs=[{"elementwise_affine": False,
-    #                  "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width, layer_width]],
-    # )
-        
-    policy_mlp_2 = MLP(
-        in_features=layer_width, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Tanh,
-        out_features=num_outputs,  # predict only loc
-        num_cells=[layer_width,layer_width],
         norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
-                     "normalized_shape": hidden_size} for hidden_size in [layer_width,layer_width]],
+                    "normalized_shape": hidden_size} for hidden_size in [enc_dim, latent_dim, latent_dim]],
     )
-    # Initialize policy weights
-    for layer in policy_mlp_2.modules():
+
+    dynamics_net = MLP(
+        in_features=latent_dim + num_outputs,
+        activation_class=SoftmaxLayer,
+        activation_kwargs=softmax_activation_kwargs,
+        out_features=latent_dim,
+        num_cells=[dynamics_dim, dynamics_dim],
+        activate_last_layer=True,
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [dynamics_dim, dynamics_dim, latent_dim]],
+    )
+
+    policy_net = MLP(
+        in_features=latent_dim,
+        activation_class=torch.nn.Mish,
+        out_features=num_outputs,
+        num_cells=[policy_dim, policy_dim],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [policy_dim, policy_dim]],
+    )
+
+    # Initialize weights
+    for layer in encoder_net.modules():
         if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
-    policy_mlp = torch.nn.Sequential(
-        policy_mlp_1,
-        policy_mlp_2,
+    for layer in dynamics_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+
+    for layer in policy_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+    
+    policy_net = torch.nn.Sequential(
+        policy_net,
         AddStateIndependentNormalScale(
             action_spec.shape[-1], scale_lb=1e-8
         ),
     )
-    
-    policy_module = ProbabilisticActor(
-        TensorDictModule(
-            module=policy_mlp,
-            in_keys=["observation_vector"],
-            out_keys=["loc", "scale"],
+
+    encoder_module = TensorDictModule(
+        module=encoder_net,
+        in_keys=["observation_vector"],
+        out_keys=["observation_encoded"]
+    )
+
+    dynamics_module = TensorDictModule(
+        module=dynamics_net,
+        in_keys=["observation_encoded", "action"],
+        out_keys=["next_observation_predicted"]
+    )
+
+    policy_module = TensorDictModule(
+        module=policy_net,
+        in_keys=["observation_encoded"],
+        out_keys=["loc", "scale"]
+    )
+
+    actor_module = ProbabilisticActor(
+        module=TensorDictSequential(
+            encoder_module,
+            policy_module
         ),
         in_keys=["loc", "scale"],
         spec=Composite(action=action_spec),
@@ -154,101 +206,52 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=ExplorationType.RANDOM,
     )
 
-    if cfg.ppo.loss_critic_type == "l2":
-        value_mlp_1 = MLP(
-            in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=256,  # predict only loc
-            num_cells=[256],
-            activate_last_layer=True
-        )
+    learning_actor_module = ProbabilisticActor(
+        module=policy_module,
+        in_keys=["loc", "scale"],
+        spec=Composite(action=action_spec),
+        distribution_class=distribution_class,
+        distribution_kwargs=distribution_kwargs,
+        return_log_prob=True,
+        default_interaction_type=ExplorationType.RANDOM,
+    )
 
-        for layer in value_mlp_1.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 0.01)
-                layer.bias.data.zero_()
+    nbins = cfg.network.nbins
+    Vmin = cfg.network.vmin
+    Vmax = cfg.network.vmax
+    support = torch.linspace(Vmin, Vmax, nbins)
 
-        value_mlp_2 = MLP(
-            in_features=256, #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=1,  # predict only loc
-            num_cells=[256, 256],
-            norm_class=torch.nn.LayerNorm,
-            norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [256, 256]],
-        )
+    value_net = MLP(
+        in_features=latent_dim, 
+        activation_class=torch.nn.Mish,
+        out_features=nbins,  
+        num_cells=[value_dim, value_dim],
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
+    )
 
-        for layer in value_mlp_2.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 0.01)
-                layer.bias.data.zero_()
+    for layer in value_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
 
-        value_mlp = torch.nn.Sequential(
-            value_mlp_1,
-            value_mlp_2,
-        )
-
-        value_module = ValueOperator(
-            value_mlp,
-            in_keys=["observation_vector"],
-        )
-        policy_module = policy_module.to(device)
-        value_module = value_module.to(device)
-        return policy_module, value_module
-
-    elif cfg.ppo.loss_critic_type == "hgauss":
-        layer_width = 2048
-        nbins = cfg.network.nbins
-        Vmin = cfg.network.vmin
-        Vmax = cfg.network.vmax
-        support = torch.linspace(Vmin, Vmax, nbins)
-
-        value_mlp_1 = MLP(
-            in_features=input_shape[-1], #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=layer_width,  # predict only loc
-            num_cells=[layer_width],
-            activate_last_layer=True
-        )
-
-        for layer in value_mlp_1.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 1.0)
-                layer.bias.data.zero_()
-
-        value_mlp_2 = MLP(
-            in_features=layer_width, #+ num_fourier_features * 5 - 5,
-            activation_class=torch.nn.Tanh,
-            out_features=nbins,  # predict only loc
-            num_cells=[layer_width, layer_width],
-            norm_class=torch.nn.LayerNorm,
-            norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [layer_width, layer_width]],
-        )
-
-        for layer in value_mlp_2.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 1.0)
-                layer.bias.data.zero_()
-
-        value_mlp = torch.nn.Sequential(
-            value_mlp_1,
-            value_mlp_2,
-        )
-
-        in_keys = ["observation_vector"]
-        value_module_1 = TensorDictModule(
-            in_keys=in_keys,
-            out_keys=["state_value_logits"],
-            module=value_mlp,
-        )
-        support_network = SupportOperator(support)
-        value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
-        value_module = TensorDictSequential(value_module_1, value_module_2)
-        support = support.to(device)
-        policy_module = policy_module.to(device)
-        value_module = value_module.to(device)
-        return policy_module, value_module, support
+    in_keys = ["observation_encoded"]
+    value_module_1 = TensorDictModule(
+        in_keys=in_keys,
+        out_keys=["state_value_logits"],
+        module=value_net,
+    )
+    support_network = SupportOperator(support)
+    value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
+    value_module = TensorDictSequential(value_module_1, value_module_2)
+    actor_module = actor_module.to(device)
+    value_module = value_module.to(device)
+    support = support.to(device)
+    encoder_module = encoder_module.to(device)
+    dynamics_module = dynamics_module.to(device)
+    policy_module = policy_module.to(device)
+    learning_actor_module = learning_actor_module.to(device)
+    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module
 
 
 
@@ -261,19 +264,28 @@ def apply_env_transforms(env):
         env,
         Compose(
             InitTracker(),
-            #StepCounter(max_steps=2000),
+            StepCounter(max_steps=4000),
             TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
             TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["v_north", "v_east", "v_down", "udot", "vdot", "wdot"]),
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
+            #Lets try 3d-encoding later
+            #AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
+            #                    out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
+            #                                add_cosine=True, num_wavelengths=11),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
             Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
             PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
             AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "v_north", "v_east", "v_down", "udot", "vdot", "wdot",
-                                "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
-                                    out_key="observation_vector", del_keys=False),        
-            CatFrames(N=2, dim=-1, in_keys=["observation_vector"]),
+
+            #CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
+            #                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
+            #                        out_key="observation_vector", del_keys=False),    
+            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
+                                "u", "v", "w", "udot", "vdot", "wdot",
+                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
+            out_key="observation_vector", del_keys=False),        
+            #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
             EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
         )
@@ -319,22 +331,22 @@ def main(cfg: DictConfig):
 
 
     template_env = make_environment()
-    if cfg.ppo.loss_critic_type == "l2":
-        policy_module, value_module, policy_parameters = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-    elif cfg.ppo.loss_critic_type == "hgauss":
-        policy_module, value_module, support = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module = \
+        make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
 
     load_model = True
     if load_model:
-        model_dir="2024-11-30/15-31-45/"
+        model_dir="2024-12-04/21-18-40/"
         model_name = "training_snapshot_79040000"
         loaded_state = load_model_state(model_name, model_dir)
-
         actor_state = loaded_state['model_actor']
         critic_state = loaded_state['model_critic']
+        dynamics_state = loaded_state['model_dynamics']
+        encoder_state = loaded_state["model_encoder"]
         policy_module.load_state_dict(actor_state)
         value_module.load_state_dict(critic_state)
-
+        dynamics_module.load_state_dict(dynamics_state)
+        encoder_module.load_state_dict(encoder_state)
     
     start_time = time.time()
     num_episodes = 5
@@ -345,7 +357,7 @@ def main(cfg: DictConfig):
     print("Evaluating episodes")
     policy_module.eval()
     #3 minute flight = 3 * 60 = 180 seconds = 180 * 60 = 10800 time steps 
-    episodes = envs.rollout(max_steps = 10800, policy=policy_module, break_when_any_done=False)
+    episodes = envs.rollout(max_steps = 4000, policy=actor_module, break_when_any_done=False)
     #assert torch.sum(episodes['next', 'done']).item() == num_episodes, "Too many episodes"
     done_indices = episodes["next", "done"][..., 0].unsqueeze(-1)
     episode_rewards = episodes["next", "episode_reward"][done_indices]

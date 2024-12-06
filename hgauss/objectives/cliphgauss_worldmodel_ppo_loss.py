@@ -158,6 +158,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         critic_network: TensorDictModule | None = None,
         encoder_network: TensorDictModule | None = None,
         dynamics_network: TensorDictModule | None = None,
+        reward_network: TensorDictModule | None = None,
         *,
         clip_epsilon: float = 0.2,
         entropy_bonus: bool = True,
@@ -195,6 +196,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         )
         self.encoder_network = encoder_network
         self.dynamics_network = dynamics_network
+        self.reward_network = reward_network
 
         for p in self.parameters():
             device = p.device
@@ -285,6 +287,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         self.encoder_network(tensordict)
         #propagate
         self.dynamics_network(tensordict)
+        self.reward_network(tensordict)
         tensordict["prev_observation_encoded"] = tensordict["observation_encoded"]
         tensordict["prev_observation_vector"] = tensordict["observation_vector"]
         tensordict["observation_vector"] = tensordict[("next", "observation_vector")]
@@ -295,6 +298,11 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         td_out.set("loss_consistency", consistency_loss)
         tensordict["observation_vector"] = tensordict["prev_observation_vector"]
         tensordict["observation_encoded"] = tensordict["prev_observation_encoded"]
+
+        #reward
+        reward_loss = torch.nn.functional.mse_loss(tensordict["next_reward_predicted"], tensordict[("next", "reward")], reduction="none")
+        td_out.set("loss_reward", reward_loss)
+        
         if self.entropy_bonus:
             entropy = self.get_entropy_bonus(dist)
             td_out.set("entropy", entropy.detach().mean())  # for logging

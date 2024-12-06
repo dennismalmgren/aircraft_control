@@ -7,6 +7,7 @@ import hydra
 from omegaconf import DictConfig
 import numpy as np
 import torch
+from torch import nn
 from torchrl.envs.utils import step_mdp
 from torchrl.record.loggers import generate_exp_name, get_logger
 from torchrl.data.tensor_specs import TensorSpec, Composite
@@ -30,7 +31,7 @@ from torchrl.envs import (
 
 from tensordict.nn import AddStateIndependentNormalScale
 from tensordict.nn import TensorDictModule, TensorDictSequential, CudaGraphModule
-from torchrl.envs import ExplorationType
+from tensordict.nn.probabilistic import InteractionType, set_interaction_type
 from torchrl.modules.distributions import TanhNormal
 from torchrl.modules import MLP, ProbabilisticActor, ValueOperator
 from torchrl.objectives import ClipPPOLoss
@@ -76,6 +77,16 @@ def log_trajectory(states, aircraft_uid):
             f.write(f"Color=Red")
             f.write(f"\n")
 
+class PlanningModule(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, estimated_value: torch.Tensor, action: torch.Tensor):
+        action_index = estimated_value.argmax(dim=-2, keepdim=True)
+        action_index = action_index.expand(-1, -1, 4)
+        action_sampled = action.gather(-2, action_index).squeeze(-2)
+        return action_sampled
+    
 class SoftmaxLayer(torch.nn.Module):
     def __init__(self,  internal_dim: int):
         super().__init__()
@@ -141,6 +152,18 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
                     "normalized_shape": hidden_size} for hidden_size in [dynamics_dim, dynamics_dim, latent_dim]],
     )
 
+    reward_net = MLP(
+        in_features=latent_dim + num_outputs,
+        activation_class=SoftmaxLayer,
+        activation_kwargs=softmax_activation_kwargs,
+        out_features=1,
+        num_cells=[dynamics_dim, dynamics_dim],
+        activate_last_layer=False,
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [dynamics_dim, dynamics_dim]],
+    )
+
     policy_net = MLP(
         in_features=latent_dim,
         activation_class=torch.nn.Mish,
@@ -167,6 +190,12 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
     
+    for layer in reward_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+    
+
     policy_net = torch.nn.Sequential(
         policy_net,
         AddStateIndependentNormalScale(
@@ -186,6 +215,12 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         out_keys=["next_observation_predicted"]
     )
 
+    reward_module = TensorDictModule(
+        module=reward_net,
+        in_keys=["observation_encoded", "action"],
+        out_keys=["next_reward_predicted"]
+    )
+
     policy_module = TensorDictModule(
         module=policy_net,
         in_keys=["observation_encoded"],
@@ -202,7 +237,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         distribution_class=distribution_class,
         distribution_kwargs=distribution_kwargs,
         return_log_prob=True,
-        default_interaction_type=ExplorationType.RANDOM,
+        default_interaction_type=InteractionType.RANDOM,
     )
 
     learning_actor_module = ProbabilisticActor(
@@ -212,7 +247,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         distribution_class=distribution_class,
         distribution_kwargs=distribution_kwargs,
         return_log_prob=True,
-        default_interaction_type=ExplorationType.RANDOM,
+        default_interaction_type=InteractionType.RANDOM,
     )
 
     nbins = cfg.network.nbins
@@ -234,23 +269,62 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
-    in_keys = ["observation_encoded"]
     value_module_1 = TensorDictModule(
-        in_keys=in_keys,
+        in_keys=["observation_encoded"],
         out_keys=["state_value_logits"],
         module=value_net,
     )
     support_network = SupportOperator(support)
     value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
     value_module = TensorDictSequential(value_module_1, value_module_2)
+    
+    value_module_1_next = TensorDictModule(
+        in_keys=["next_observation_predicted"],
+        out_keys=["next_state_value_logits"],
+        module=value_net,
+    )
+
+    value_module_2_next = TensorDictModule(support_network, in_keys=["next_state_value_logits"], out_keys=["next_state_value_predicted"])
+    
     actor_module = actor_module.to(device)
     value_module = value_module.to(device)
     support = support.to(device)
     encoder_module = encoder_module.to(device)
     dynamics_module = dynamics_module.to(device)
+    reward_module = reward_module.to(device)
     policy_module = policy_module.to(device)
     learning_actor_module = learning_actor_module.to(device)
-    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module
+    expander_module = TensorDictModule(
+        in_keys=["observation_vector"],
+        out_keys=["observation_vector"],
+        module = lambda vals: vals.unsqueeze(-2).expand(-1, 100, -1)
+    )
+
+    value_estimation_module = TensorDictModule(
+        in_keys=["next_state_value_predicted", "next_reward_predicted"],
+        out_keys=["estimated_value"],
+        module = lambda value, reward: reward + 0.995 * value
+    )
+
+    planning_net = PlanningModule()
+    planning_module = TensorDictModule(
+        module=planning_net,
+        in_keys=["estimated_value", "action"],
+        out_keys=["action"]
+    )
+    planning_module = TensorDictSequential(
+        expander_module,
+        encoder_module,
+        actor_module,
+        dynamics_module,
+        value_module_1_next, 
+        value_module_2_next,
+        reward_module,
+        value_estimation_module,
+        planning_module
+    )
+    planning_module = planning_module.to(device)
+    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module, planning_module
 
 
 
@@ -266,22 +340,22 @@ def apply_env_transforms(env):
             StepCounter(max_steps=2000),
             TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
             TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
-            #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
+            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
             #Lets try 3d-encoding later
-            AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
-                                out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
-                                            add_cosine=False, num_wavelengths=11),
+            #AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
+            #                    out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
+            #                                add_cosine=True, num_wavelengths=11),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
             Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
             PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
             AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-                    
+
             #CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
             #                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             #                        out_key="observation_vector", del_keys=False),    
             CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
-                                "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
+                                "u", "v", "w", "udot", "vdot", "wdot",
                     "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             out_key="observation_vector", del_keys=False),        
             #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
@@ -295,6 +369,14 @@ def make_environment():
     env = make_raw_environment()
     env = apply_env_transforms(env)
     return env
+
+def env_maker_eval(cfg):
+    parallel_env = ParallelEnv(
+        cfg.num_eval_envs,
+        EnvCreator(lambda cfg=cfg: make_raw_environment()),
+    )
+    parallel_env = apply_env_transforms(parallel_env)
+    return parallel_env
 
 def env_maker(cfg):
     parallel_env = ParallelEnv(
@@ -351,13 +433,14 @@ def main(cfg: DictConfig):
     template_env = make_environment()
     #test_td = template_env.reset()
 
-    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module = \
+    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module, planning_module = \
         make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
     loss_module = ClipHGaussWorldModelPPOLoss(
         actor_network=learning_actor_module,
         critic_network=value_module,
         encoder_network=encoder_module,
         dynamics_network=dynamics_module,
+        reward_network=reward_module,
         clip_epsilon=cfg.ppo.clip_epsilon,
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
@@ -374,9 +457,12 @@ def main(cfg: DictConfig):
     actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
     consistency_optim = torch.optim.AdamW(list(encoder_module.parameters()) + 
-                                          list(dynamics_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
+                                          list(dynamics_module.parameters()) +
+                                          list(reward_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
+
     collected_frames = 0
     cfg_logger_save_interval = cfg.logger.save_interval
+    cfg_logger_eval_interval = cfg.logger.eval_interval
     loaded_frames = 0
 
     load_model = False
@@ -419,7 +505,9 @@ def main(cfg: DictConfig):
         batch_size=cfg.optim.mini_batch_size,
     )
     
-    
+    #create eval envs
+    eval_envs = env_maker_eval(cfg)
+
     reward_keys = ["reward", "task_reward", "smoothness_reward"]
     cfg_loss_ppo_epochs = cfg.ppo.epochs
     cfg_max_grad_norm = cfg.optim.max_grad_norm
@@ -436,7 +524,27 @@ def main(cfg: DictConfig):
 
     losses = TensorDict({}, batch_size=[cfg_loss_ppo_epochs, num_mini_batches])
     norms = TensorDict({}, batch_size=[cfg_loss_ppo_epochs, num_mini_batches])
-
+    # K = 100
+    # def planner(actor_module, encoder_module, dynamics_module, reward_module, value_module):
+    #     def plan(observation_vector: torch.Tensor):
+    #         observation_vector = observation_vector.expand(K, -1, -1)
+    #         observation_encoded, loc, var, action, log_prob = actor_module(observation_vector)
+    #         next_states = dynamics_module(observation_encoded, action)
+    #         next_reward = reward_module(observation_encoded, action) #todo: incorporate next state into the reward prediction?
+    #         next_value_logits, next_value_value = value_module(next_states)
+    #         value_estimated = next_reward + 0.995 * next_value_value
+    #         action_index = value_estimated.argmax(dim=0)
+    #         action_index = action_index.unsqueeze(0).expand(-1, -1, 4)
+    #         action_sampled = action.gather(0, action_index).squeeze(0)
+    #         return action_sampled
+        
+    #     planning_module = TensorDictModule(
+    #         module=plan,
+    #         in_keys=["observation_vector"],
+    #         out_keys=["action"]
+    #     )
+    #     return planning_module
+    
     for i, data in enumerate(collector):
 
         log_info = {}
@@ -493,18 +601,20 @@ def main(cfg: DictConfig):
                 batch = batch.to(device)
                 loss = loss_module(batch)
                 losses[j, k] = loss.select(
-                    "loss_critic", "loss_entropy", "loss_objective", "loss_consistency"
+                    "loss_critic", "loss_entropy", "loss_objective", "loss_consistency", "loss_reward"
                 ).detach()
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
                 consistency_loss = loss["loss_consistency"] * 20
-                consistency_critic = consistency_loss + critic_loss
+                reward_loss = loss["loss_reward"] * 20
+                consistency_critic_loss = consistency_loss + critic_loss + reward_loss
 
                 consistency_optim.zero_grad()
                 critic_optim.zero_grad()                
-                consistency_critic.backward()
+                consistency_critic_loss.backward()
                 consistency_grad_norm = torch.nn.utils.clip_grad_norm_(list(encoder_module.parameters())
-                                                                        + list(dynamics_module.parameters()), cfg_max_grad_norm * 2)
+                                                                        + list(dynamics_module.parameters()) + 
+                                                                        list(reward_module.parameters()), cfg_max_grad_norm * 2)
                 critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
                 critic_optim.step()
                 consistency_optim.step()
@@ -538,6 +648,108 @@ def main(cfg: DictConfig):
                 "train/clip_epsilon": cfg.ppo.clip_epsilon
             }
         )
+        if ((i - 1) * frames_in_batch + loaded_frames) // cfg_logger_eval_interval < \
+           (i * frames_in_batch + loaded_frames) // cfg_logger_eval_interval:
+            class ValueEstimationNet(nn.Module):
+                def __init__(self):
+                    super().__init__()
+
+                def forward(self, next_state_value_predicted: torch.Tensor, next_reward_predicted: torch.Tensor):
+                    return next_reward_predicted + 0.995 * next_state_value_predicted
+            
+            value_estimation_module = TensorDictModule(
+                in_keys=["next_state_value_predicted", "next_reward_predicted"],
+                out_keys=["estimated_value"],
+                module = ValueEstimationNet()
+            )
+            
+            class ExpanderNet(nn.Module):
+                def __init__(self):
+                    super().__init__()
+
+                def forward(self, observation_encoded: torch.Tensor):
+                    return observation_encoded.unsqueeze(-2).expand(-1, 20, -1)
+            
+            class SelectionNet(nn.Module):
+                def __init__(self):
+                    super().__init__()
+
+                def forward(self, next_state_value_predicted: torch.Tensor, action: torch.Tensor):
+                    action_index = next_state_value_predicted.argmax(dim=-2, keepdim=True)
+                    action_sampled = action.gather(-2, action_index).squeeze(-2)
+                    return action_sampled
+
+            expander_module = TensorDictModule(
+                in_keys=["observation_encoded"],
+                out_keys=["observation_encoded"],
+                module = ExpanderNet()
+            )
+
+            selection_module = TensorDictModule(
+                in_keys=["next_state_value_predicted", "action"],
+                out_keys=["action"],
+                module = SelectionNet()
+            )
+
+            value_module_1_next = TensorDictModule(
+                in_keys=["next_observation_predicted"],
+                out_keys=["next_state_value_logits"],
+                module=value_module[0].module,
+            )
+
+            support_network = SupportOperator(support)
+            value_module_2_next = TensorDictModule(support_network, in_keys=["next_state_value_logits"], out_keys=["next_state_value_predicted"])
+            #Planning eval
+            data_ = eval_envs.reset()
+            result = []
+            for i in range(2000):
+                data_ = data_.to(device)
+                encoder_module(data_)
+                planning_data = data_.select("observation_encoded").clone()
+                expander_module(planning_data)
+                learning_actor_module(planning_data)
+                planning_data["action"][:, 0] = torch.tanh(planning_data["loc"][:, 0])
+                dynamics_module(planning_data)
+                reward_module(planning_data)
+                value_module_1_next(planning_data)
+                value_module_2_next(planning_data)
+                value_estimation_module(planning_data)
+                selection_module(planning_data)
+                data_["action"] = planning_data["action"]
+                data_ = data_.to("cpu")
+                data, data_ = eval_envs.step_and_maybe_reset(data_)
+                result.append(data)
+            eval_results = torch.stack(result)
+
+            eval_done_indices = eval_results["next", "done"][..., 0].unsqueeze(-1)
+            eval_episode_rewards = eval_results["next", "episode_reward"][eval_done_indices]
+            eval_episode_smoothness_rewards = eval_results["next", "episode_smoothness_reward"][eval_done_indices]
+            eval_episode_task_rewards = eval_results["next", "episode_task_reward"][eval_done_indices]
+
+            log_info.update(
+            {
+                "eval/planning_episode_reward": eval_episode_rewards.mean().item(),
+                "eval/planning_episode_smoothness_reward": eval_episode_smoothness_rewards.mean().item(),
+                "eval/planning_episode_task_reward": eval_episode_task_rewards.mean().item(),
+            })
+
+            actor_module.eval()
+            actor_module = actor_module.to("cpu")
+            with set_interaction_type(InteractionType.DETERMINISTIC):
+                eval_results = eval_envs.rollout(2000, policy=actor_module)
+            actor_module = actor_module.to(device)
+
+            actor_module.train()
+            eval_done_indices = eval_results["next", "done"][..., 0].unsqueeze(-1)
+            eval_episode_rewards = eval_results["next", "episode_reward"][eval_done_indices]
+            eval_episode_smoothness_rewards = eval_results["next", "episode_smoothness_reward"][eval_done_indices]
+            eval_episode_task_rewards = eval_results["next", "episode_task_reward"][eval_done_indices]
+            log_info.update(
+            {
+                "eval/episode_reward": eval_episode_rewards.mean().item(),
+                "eval/episode_smoothness_reward": eval_episode_smoothness_rewards.mean().item(),
+                "eval/episode_task_reward": eval_episode_task_rewards.mean().item(),
+            })
 
         if ((i - 1) * frames_in_batch + loaded_frames) // cfg_logger_save_interval < \
            (i * frames_in_batch + loaded_frames) // cfg_logger_save_interval:
@@ -546,9 +758,11 @@ def main(cfg: DictConfig):
                         'model_critic': value_module.state_dict(),
                         'model_dynamics': dynamics_module.state_dict(),
                         'model_encoder': encoder_module.state_dict(),
+                        'model_reward': reward_module.state_dict(),
                         'actor_optimizer': actor_optim.state_dict(),
                         'critic_optimizer': critic_optim.state_dict(),
                         'consistency_optimizer': consistency_optim.state_dict(),
+
                         "collected_frames": {"collected_frames": collected_frames},
                 }
                 torch.save(savestate, f"training_snapshot_{collected_frames}.pt")
