@@ -42,6 +42,7 @@ network:
   nbins: 101
   vmin: -100
   vmax: 100
+  
 env:
   max_time_steps_train: 600
   max_time_steps_eval: 1200

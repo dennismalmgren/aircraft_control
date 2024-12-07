@@ -666,7 +666,7 @@ def main(cfg: DictConfig):
             actor_module.eval()
             actor_module = actor_module.to("cpu")
             with set_interaction_type(InteractionType.DETERMINISTIC):
-                eval_results = eval_envs.rollout(600, policy=actor_module)
+                eval_results = eval_envs.rollout(cfg.env.max_time_steps_eval, policy=actor_module)
             actor_module = actor_module.to(device)
 
             actor_module.train()
