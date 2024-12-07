@@ -32,7 +32,7 @@ collector:
 
 ppo:
   gae_lambda: 0.95
-  gamma: 0.995
+  gamma: 0.99
   clip_epsilon: 0.2
   entropy_coef: 0.0
   epochs: 15
@@ -41,8 +41,11 @@ ppo:
 network:
   nbins: 101
   vmin: -100
-  vmax: 400
-
+  vmax: 100
+env:
+  max_time_steps_train: 600
+  max_time_steps_eval: 1200
+  
 optim:
   lr_policy: 3.0e-4
   lr_value: 3.0e-3

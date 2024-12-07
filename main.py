@@ -1,6 +1,7 @@
 import os
 import random
 import time
+import math
 
 import tqdm
 import hydra
@@ -253,6 +254,10 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     nbins = cfg.network.nbins
     Vmin = cfg.network.vmin
     Vmax = cfg.network.vmax
+    dk = (Vmax - Vmin) / (nbins - 4)
+    Ktot = dk * nbins
+    Vmax = math.ceil(Vmin + Ktot)
+
     support = torch.linspace(Vmin, Vmax, nbins)
 
     value_net = MLP(
@@ -332,14 +337,14 @@ def make_raw_environment():
     env = JSBSimControlEnv()
     return env
 
-def apply_env_transforms(env):
+def apply_env_transforms(env, cfg, is_train = True):
     env = TransformedEnv(
         env,
         Compose(
             InitTracker(),
-            StepCounter(max_steps=2000),
-            TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
-            TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
+            StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
+            #TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=10000),
+            #TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=10000),
             RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
             #Lets try 3d-encoding later
             #AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
@@ -365,9 +370,9 @@ def apply_env_transforms(env):
     )
     return env
 
-def make_environment():
+def make_environment(cfg, is_train=True):
     env = make_raw_environment()
-    env = apply_env_transforms(env)
+    env = apply_env_transforms(env, cfg, is_train)
     return env
 
 def env_maker_eval(cfg):
@@ -375,7 +380,7 @@ def env_maker_eval(cfg):
         cfg.num_eval_envs,
         EnvCreator(lambda cfg=cfg: make_raw_environment()),
     )
-    parallel_env = apply_env_transforms(parallel_env)
+    parallel_env = apply_env_transforms(parallel_env, cfg, is_train=False)
     return parallel_env
 
 def env_maker(cfg):
@@ -383,7 +388,7 @@ def env_maker(cfg):
         cfg.collector.env_per_collector,
         EnvCreator(lambda cfg=cfg: make_raw_environment()),
     )
-    parallel_env = apply_env_transforms(parallel_env)
+    parallel_env = apply_env_transforms(parallel_env, cfg)
     return parallel_env
 
 def load_model_state(model_name, run_folder_name=""):
@@ -430,7 +435,7 @@ def main(cfg: DictConfig):
                           "project": cfg.logger.project,},
         )
 
-    template_env = make_environment()
+    template_env = make_environment(cfg)
     #test_td = template_env.reset()
 
     actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module, planning_module = \
@@ -465,22 +470,30 @@ def main(cfg: DictConfig):
     cfg_logger_eval_interval = cfg.logger.eval_interval
     loaded_frames = 0
 
-    load_model = False
+    load_model = True
     if load_model:
-        model_dir="2024-11-27/02-22-57/"
-        model_name = "training_snapshot_39040000"
+        model_dir="2024-12-07/10-39-45/"
+        model_name = "training_snapshot_8040000"
         loaded_state = load_model_state(model_name, model_dir)
 
         actor_state = loaded_state['model_actor']
         critic_state = loaded_state['model_critic']
+        dynamics_state = loaded_state['model_dynamics']
+        encoder_state = loaded_state['model_encoder']
+        reward_state = loaded_state['model_reward']
         actor_optim_state = loaded_state['actor_optimizer']
         critic_optim_state = loaded_state['critic_optimizer']
+        consistency_optim_state = loaded_state['consistency_optimizer']
         collected_frames = loaded_state['collected_frames']['collected_frames']
         loaded_frames = collected_frames
         policy_module.load_state_dict(actor_state)
         value_module.load_state_dict(critic_state)
+        dynamics_module.load_state_dict(dynamics_state)
+        encoder_module.load_state_dict(encoder_state)
+        reward_module.load_state_dict(reward_state)
         actor_optim.load_state_dict(actor_optim_state)
         critic_optim.load_state_dict(critic_optim_state)
+        consistency_optim.load_state_dict(consistency_optim_state)
 
 
     frames_remaining = cfg.collector.total_frames - collected_frames
@@ -555,8 +568,8 @@ def main(cfg: DictConfig):
         episode_rewards = data["next", "episode_reward"][data["next", "done"]]
         episode_pdot = data["next", "episode_pdot"][data["next", "done"]]
         episode_p = data["next", "episode_p"][data["next", "done"]]
-        episode_min_mach = data["next", "episode_min_mach"][data["next", "done"]]
-        episode_max_mach = data["next", "episode_max_mach"][data["next", "done"]]
+        #episode_min_mach = data["next", "episode_min_mach"][data["next", "done"]]
+        #episode_max_mach = data["next", "episode_max_mach"][data["next", "done"]]
         if len(episode_rewards) > 0:
             episode_length = data["next", "step_count"][data["next", "done"]]
             log_info.update(
@@ -564,8 +577,8 @@ def main(cfg: DictConfig):
                     "train/pdot": (episode_pdot / episode_length).mean().item(),
                     "train/p": (episode_p / episode_length).mean().item(),
                     "train/episode_length": episode_length.float().mean().item(), #mean?
-                    "train/episode_min_mach": episode_min_mach.mean().item(),
-                    "train/episode_max_mach": episode_max_mach.mean().item(),
+                 #   "train/episode_min_mach": episode_min_mach.mean().item(),
+                #    "train/episode_max_mach": episode_max_mach.mean().item(),
                 }
             )
             for reward_key in reward_keys:
@@ -606,7 +619,7 @@ def main(cfg: DictConfig):
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
                 consistency_loss = loss["loss_consistency"] * 20
-                reward_loss = loss["loss_reward"] * 20
+                reward_loss = loss["loss_reward"]
                 consistency_critic_loss = consistency_loss + critic_loss + reward_loss
 
                 consistency_optim.zero_grad()
@@ -650,93 +663,10 @@ def main(cfg: DictConfig):
         )
         if ((i - 1) * frames_in_batch + loaded_frames) // cfg_logger_eval_interval < \
            (i * frames_in_batch + loaded_frames) // cfg_logger_eval_interval:
-            class ValueEstimationNet(nn.Module):
-                def __init__(self):
-                    super().__init__()
-
-                def forward(self, next_state_value_predicted: torch.Tensor, next_reward_predicted: torch.Tensor):
-                    return next_reward_predicted + 0.995 * next_state_value_predicted
-            
-            value_estimation_module = TensorDictModule(
-                in_keys=["next_state_value_predicted", "next_reward_predicted"],
-                out_keys=["estimated_value"],
-                module = ValueEstimationNet()
-            )
-            
-            class ExpanderNet(nn.Module):
-                def __init__(self):
-                    super().__init__()
-
-                def forward(self, observation_encoded: torch.Tensor):
-                    return observation_encoded.unsqueeze(-2).expand(-1, 20, -1)
-            
-            class SelectionNet(nn.Module):
-                def __init__(self):
-                    super().__init__()
-
-                def forward(self, next_state_value_predicted: torch.Tensor, action: torch.Tensor):
-                    action_index = next_state_value_predicted.argmax(dim=-2, keepdim=True)
-                    action_sampled = action.gather(-2, action_index).squeeze(-2)
-                    return action_sampled
-
-            expander_module = TensorDictModule(
-                in_keys=["observation_encoded"],
-                out_keys=["observation_encoded"],
-                module = ExpanderNet()
-            )
-
-            selection_module = TensorDictModule(
-                in_keys=["next_state_value_predicted", "action"],
-                out_keys=["action"],
-                module = SelectionNet()
-            )
-
-            value_module_1_next = TensorDictModule(
-                in_keys=["next_observation_predicted"],
-                out_keys=["next_state_value_logits"],
-                module=value_module[0].module,
-            )
-
-            support_network = SupportOperator(support)
-            value_module_2_next = TensorDictModule(support_network, in_keys=["next_state_value_logits"], out_keys=["next_state_value_predicted"])
-            #Planning eval
-            data_ = eval_envs.reset()
-            result = []
-            for i in range(2000):
-                data_ = data_.to(device)
-                encoder_module(data_)
-                planning_data = data_.select("observation_encoded").clone()
-                expander_module(planning_data)
-                learning_actor_module(planning_data)
-                planning_data["action"][:, 0] = torch.tanh(planning_data["loc"][:, 0])
-                dynamics_module(planning_data)
-                reward_module(planning_data)
-                value_module_1_next(planning_data)
-                value_module_2_next(planning_data)
-                value_estimation_module(planning_data)
-                selection_module(planning_data)
-                data_["action"] = planning_data["action"]
-                data_ = data_.to("cpu")
-                data, data_ = eval_envs.step_and_maybe_reset(data_)
-                result.append(data)
-            eval_results = torch.stack(result)
-
-            eval_done_indices = eval_results["next", "done"][..., 0].unsqueeze(-1)
-            eval_episode_rewards = eval_results["next", "episode_reward"][eval_done_indices]
-            eval_episode_smoothness_rewards = eval_results["next", "episode_smoothness_reward"][eval_done_indices]
-            eval_episode_task_rewards = eval_results["next", "episode_task_reward"][eval_done_indices]
-
-            log_info.update(
-            {
-                "eval/planning_episode_reward": eval_episode_rewards.mean().item(),
-                "eval/planning_episode_smoothness_reward": eval_episode_smoothness_rewards.mean().item(),
-                "eval/planning_episode_task_reward": eval_episode_task_rewards.mean().item(),
-            })
-
             actor_module.eval()
             actor_module = actor_module.to("cpu")
             with set_interaction_type(InteractionType.DETERMINISTIC):
-                eval_results = eval_envs.rollout(2000, policy=actor_module)
+                eval_results = eval_envs.rollout(600, policy=actor_module)
             actor_module = actor_module.to(device)
 
             actor_module.train()
