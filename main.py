@@ -345,11 +345,11 @@ def apply_env_transforms(env, cfg, is_train = True):
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
             #TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=10000),
             #TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=10000),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
+            #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
             #Lets try 3d-encoding later
-            #AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
-            #                    out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
-            #                                add_cosine=True, num_wavelengths=11),
+            AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
+                                out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
+                                            add_cosine=False, base_scale=0.1),
             EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
             Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
@@ -360,7 +360,7 @@ def apply_env_transforms(env, cfg, is_train = True):
             #                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             #                        out_key="observation_vector", del_keys=False),    
             CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
-                                "u", "v", "w", "udot", "vdot", "wdot",
+                                "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
                     "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             out_key="observation_vector", del_keys=False),        
             #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
@@ -470,7 +470,7 @@ def main(cfg: DictConfig):
     cfg_logger_eval_interval = cfg.logger.eval_interval
     loaded_frames = 0
 
-    load_model = True
+    load_model = False
     if load_model:
         model_dir="2024-12-07/10-39-45/"
         model_name = "training_snapshot_8040000"

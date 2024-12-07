@@ -17,7 +17,7 @@ logger:
   project: aircraft_control
   test_interval: 100_000
   save_interval: 1_000_000
-  eval_interval: 1_000_000
+  eval_interval: 500_000
   num_test_episodes: 5
 
 

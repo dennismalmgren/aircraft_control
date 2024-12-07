@@ -71,7 +71,7 @@ class AltitudeToScaleCode(Transform):
     """
 
     def __init__(
-        self, in_keys, out_keys, add_cosine=True, num_wavelengths=13
+        self, in_keys, out_keys, add_cosine=True, num_wavelengths=13, base_scale=1.0
     ):
         in_keys_inv = []
         out_keys_inv = copy.copy(in_keys_inv)
@@ -82,13 +82,14 @@ class AltitudeToScaleCode(Transform):
             )
         self.add_cosine = add_cosine
         self.N = num_wavelengths
+        self.base_scale = base_scale
 
     def _call(self, tensordict: TensorDictBase) -> TensorDictBase:
         for in_key, out_key in zip(self.in_keys, self.out_keys):
             value = tensordict[in_key]
-            scale_code_sine = _multi_scale_sinusoidal_encoding(value, value.device, N = self.N)
+            scale_code_sine = _multi_scale_sinusoidal_encoding(value, value.device, N = self.N, base_scale=self.base_scale)
             if self.add_cosine:
-                scale_code_cosine = _multi_scale_cosinusoidal_encoding(value, value.device, N = self.N)
+                scale_code_cosine = _multi_scale_cosinusoidal_encoding(value, value.device, N = self.N, base_scale=self.base_scale)
                 scale_code = torch.cat((scale_code_sine, scale_code_cosine), dim=-1)
             else:
                 scale_code = scale_code_sine
