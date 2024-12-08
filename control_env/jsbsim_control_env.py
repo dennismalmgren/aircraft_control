@@ -93,10 +93,19 @@ class JSBSimControlEnv(EnvBase):
                             truncated=Categorical(shape=(1,), n=2, device=device, dtype=torch.bool),
                             done=Categorical(shape=(1,), n=2, device=device, dtype=torch.bool),
                         )
+        
         self.reward_spec = Composite(
-            reward = Unbounded(shape=(1,), device=device, dtype=torch.float32), #start with the one.
+            reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             task_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             smoothness_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            safety_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            alt_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            speed_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            heading_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            roll_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            smoothness_pdot_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            smoothness_qdot_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            smoothness_rdot_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
         )
         self.state_spec = self.observation_spec.clone()
 
@@ -106,6 +115,12 @@ class JSBSimControlEnv(EnvBase):
         self._tolerance_altitude = None
         self._tolerance_speed = None
         self._tolerance_heading = None
+        self._tolerance_roll = None
+        self._error_scale_alt = None
+        self._error_scale_speed = None
+        self._error_scale_heading = None
+        self._error_scale_roll = None
+
         self.curriculum_manager = CurriculumManagerJsbSim(
             min_lat_geod_deg = 57.0,
             max_lat_geod_deg = 60.0,
@@ -131,67 +146,85 @@ class JSBSimControlEnv(EnvBase):
         Returns:
         - error: Signed heading error in radians (tensor)
         """
-        sin_diff = math.sin(theta2) * math.cos(theta1) - math.cos(theta2) * math.sin(theta1)
-        cos_diff = math.cos(theta2) * math.cos(theta1) + math.sin(theta2) * math.sin(theta1)
-        error = math.atan2(sin_diff, cos_diff)
+        sin_diff = torch.sin(theta2) * torch.cos(theta1) - torch.cos(theta2) * torch.sin(theta1)
+        cos_diff = torch.cos(theta2) * torch.cos(theta1) + torch.sin(theta2) * torch.sin(theta1)
+        error = torch.atan2(sin_diff, cos_diff)
         return error
 
     def _add_reward(self, simulator_state: SimulatorState, td_out):
+        safety_reward = torch.zeros(1, dtype=torch.float32, device=self.device)
+        if simulator_state.position_h_sl_m < 300:
+            safety_reward = torch.tensor(-100.0, dtype=torch.float32, device=self.device)
+        else:
+            safety_reward = torch.tensor(0.0, dtype=torch.float32, device=self.device)
+
         alt_reward = 0.0
         speed_reward = 0.0
         heading_reward = 0.0
         roll_reward = 0.0
         total_reward = 0.0
         smoothness_reward = 0.0
-        task_reward = 0.0
-        if simulator_state.position_h_sl_m < 300:
-            task_reward = -100.0
-            total_reward = task_reward
+        task_reward = torch.zeros(1, dtype=torch.float32, device=self.device)
+
+        alt_error = torch.tensor(simulator_state.position_h_sl_m - self._target_altitude, dtype=torch.float32, device=self.device)
+
+        if self._tolerance_altitude is not None:
+            alt_error = torch.max(0, torch.abs(alt_error) - self._tolerance_altitude)
+        alt_reward = torch.exp(-((alt_error / self._error_scale_alt) ** 2))
+        
+        speed_error = simulator_state.velocity_mach - self._target_speed
+
+        if self._tolerance_speed is not None:
+            speed_error = torch.max(0, torch.abs(speed_error) - self._tolerance_speed)
+
+        speed_reward = torch.exp(-((speed_error / self._error_scale_speed)**2))
+        
+        current_heading = torch.tensor(simulator_state.attitude_psi_rad, dtype=torch.float32, device=self.device)
+        heading_error = self.heading_error(current_heading, self._target_heading)
+        
+        if self._tolerance_heading is not None:
+            heading_error = torch.max(0, torch.abs(heading_error) - self._tolerance_heading)
+
+        heading_reward = torch.exp(-((heading_error / self._error_scale_heading)**2))
+        
+        roll_error = torch.tensor(simulator_state.attitude_phi_rad, dtype=torch.float32, device=self.device)
+
+        if self._tolerance_roll is not None:
+            roll_error = torch.max(0, abs(roll_error) - self._tolerance_roll)
+
+        roll_reward = torch.exp(-((roll_error / self._error_scale_roll)**2))
+
+        smoothness_pdot_error = torch.tensor(simulator_state.acceleration_pdot_rad_sec2, dtype=torch.float32, device=self.device)
+        smoothness_pdot_reward = torch.exp(-((smoothness_pdot_error / self._error_scale_smoothness_pdot)**2))
+
+        smoothness_qdot_error = torch.tensor(simulator_state.acceleration_qdot_rad_sec2, dtype=torch.float32, device=self.device)
+        smoothness_qdot_reward = torch.exp(-((smoothness_qdot_error / self._error_scale_smoothness_qdot)**2))
+
+        smoothness_rdot_error = torch.tensor(simulator_state.acceleration_rdot_rad_sec2, dtype=torch.float32, device=self.device)
+        smoothness_rdot_reward = torch.exp(-((smoothness_rdot_error / self._error_scale_smoothness_rdot)**2))
+            
+        smoothness_reward = math.pow(smoothness_pdot_reward * smoothness_qdot_reward * smoothness_rdot_reward , 1/3)
+        task_reward = torch.pow(alt_reward * speed_reward * heading_reward * roll_reward, 1/4)
+
+        td_out.set("safety_reward", safety_reward)
+        td_out.set("alt_reward", alt_reward)
+        td_out.set("speed_reward", speed_reward)
+        td_out.set("heading_reward", heading_reward)
+        td_out.set("roll_reward", roll_reward)
+        td_out.set("smoothness_pdot_reward", smoothness_pdot_reward)
+        td_out.set("smoothness_qdot_reward", smoothness_qdot_reward)
+        td_out.set("smoothness_rdot_reward", smoothness_rdot_reward)
+        
+        #TODO: Add errors as observations.
+        td_out.set("smoothness_reward", smoothness_reward)
+        td_out.set("task_reward", task_reward)
+        
+        #Combine thresholded rewards
+        if not torch.isclose(safety_reward, torch.zeros(1, dtype=torch.float32, device=self.device)):
+            total_reward = safety_reward
         else:
-            alt_error_scale = 350.0  # m'
-            alt_error = simulator_state.position_h_sl_m - self._target_altitude
-            if self._tolerance_altitude is not None:
-                alt_error = max(0, abs(alt_error) - self._tolerance_altitude)
-            alt_reward = math.exp(-((alt_error / alt_error_scale) ** 2))
-            
-            speed_error_scale = 0.5
-            speed_error = simulator_state.velocity_mach - self._target_speed
-            if self._tolerance_speed is not None:
-                speed_error = max(0, abs(speed_error) - self._tolerance_speed)
-
-            speed_reward = math.exp(-((speed_error / speed_error_scale)**2))
-            
-            heading_error_scale = math.pi/2
-            heading_error = self.heading_error(simulator_state.attitude_psi_rad, self._target_heading)
-            if self._tolerance_heading is not None:
-                heading_error = max(0, abs(heading_error) - self._tolerance_heading)
-
-            heading_reward = math.exp(-((heading_error / heading_error_scale)**2))
-            
-            roll_error_scale = 0.25
-            roll_error = simulator_state.attitude_phi_rad
-            tolerance_roll = 5 * math.pi / 180.0
-            roll_error = max(0, abs(roll_error) - tolerance_roll)
-            roll_reward = math.exp(-((roll_error / roll_error_scale)**2))
-
-            task_reward = math.pow(alt_reward * speed_reward * heading_reward * roll_reward, 1/4)
-
-
-            # if math.isclose(task_reward, 1.0):
-            #     smoothness_p_scale = 0.1
-            #     smoothness_p_reward = math.exp(-((simulator_state.acceleration_pdot_rad_sec2 / smoothness_p_scale)**2))
-            #     smoothness_q_scale = 0.1
-            #     smoothness_q_reward = math.exp(-((simulator_state.acceleration_qdot_rad_sec2 / smoothness_q_scale)**2))
-            #     smoothness_r_scale = 0.1
-            #     smoothness_r_reward = math.exp(-((simulator_state.acceleration_rdot_rad_sec2 / smoothness_r_scale)**2))
-                
-            #     smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward , 1/3)
-
-            total_reward = task_reward + smoothness_reward
-
-        td_out.set("smoothness_reward", torch.tensor(smoothness_reward, device=self.device))
-        td_out.set("task_reward", torch.tensor(task_reward, device=self.device))
-        td_out.set("reward", torch.tensor(total_reward, device=self.device))
+            total_reward = task_reward #no smoothness for now
+        td_out.set("reward", total_reward)
         
     def _evaluate_terminated(self, simulator_state: SimulatorState) -> bool:
         if simulator_state.position_h_sl_m < 300:
@@ -272,12 +305,25 @@ class JSBSimControlEnv(EnvBase):
             aircraft_ic = self.curriculum_manager.get_initial_conditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
-        self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
+        self._target_altitude = torch.tensor(simulator_state.position_h_sl_m, dtype=torch.float32, device=self.device)
         self._tolerance_altitude = None #100
         self._target_speed = simulator_state.velocity_mach #speed up a little
         self._tolerance_speed = None #0.1
-        self._target_heading = simulator_state.attitude_psi_rad
+        self._target_heading = torch.tensor(simulator_state.attitude_psi_rad, dtype=torch.float32, device=self.device)
         self._tolerance_heading = None #5 * torch.pi / 180 #three degrees
+        self._target_roll = torch.tensor(0., dtype=torch.float32, device=self.device)
+        self._tolerance_roll = None
+
+        self._error_scale_alt = torch.tensor(350.0, dtype=torch.float32, device=self.device)  # m'
+        self._error_scale_speed = torch.tensor(0.5, dtype=torch.float32, device=self.device)
+        self._error_scale_heading = torch.ones(1, dtype=torch.float32, device=self.device) * torch.pi/2
+        self._error_scale_roll = torch.tensor(0.25, dtype=torch.float32, device=self.device)
+        
+
+        self._error_scale_smoothness_pdot = torch.tensor(0.1, dtype=torch.float32, device=self.device) 
+        self._error_scale_smoothness_qdot = torch.tensor(0.1, dtype=torch.float32, device=self.device) 
+        self._error_scale_smoothness_rdot = torch.tensor(0.1, dtype=torch.float32, device=self.device) 
+        
         self._add_observations(simulator_state, td_out)
         self._add_last_action(primer_action, td_out)
         self._add_done_flags(simulator_state, td_out)
