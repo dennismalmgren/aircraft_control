@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: ppo_vanilla_maneuver_gradient
+  exp_name: ppo_vanilla_maneuver_hgauss
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000

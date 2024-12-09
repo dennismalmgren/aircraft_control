@@ -57,7 +57,6 @@ from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgauss_worldmodel_ppo_loss import ClipHGaussWorldModelPPOLoss
-from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -120,24 +119,18 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "high": action_spec.space.high,
         "tanh_loc": False,
     }
-    
-    # Define policy architecture
-    policy_dim = 256
-
+# Define policy architecture
     policy_mlp = MLP(
         in_features=input_shape[-1],
-        activation_class=torch.nn.Mish,
+        activation_class=torch.nn.Tanh,
         out_features=num_outputs,  # predict only loc
-        num_cells=[policy_dim, policy_dim],
-        norm_class=torch.nn.LayerNorm,
-        norm_kwargs=[{"elementwise_affine": False,
-                    "normalized_shape": hidden_size} for hidden_size in [policy_dim, policy_dim]],
+        num_cells=[256, 256],
     )
 
     # Initialize policy weights
     for layer in policy_mlp.modules():
         if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            torch.nn.init.orthogonal_(layer.weight, 1.0)
             layer.bias.data.zero_()
 
     # Add state-independent normal scale
@@ -164,24 +157,11 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     )
 
     # Define value architecture
-    value_dim = 256
-    vmin = cfg.network.vmin
-    vmax = cfg.network.vmax
-    nbins = cfg.network.nbins
-    dk = (vmax - vmin) / (nbins - 4)
-    ktot = dk * nbins
-    vmax_support = math.ceil(vmin + ktot)
-
-    value_support = torch.linspace(vmin, vmax_support, nbins)
-
     value_mlp = MLP(
         in_features=input_shape[-1],
-        activation_class=torch.nn.Mish,
-        out_features=nbins,
-        num_cells=[value_dim, value_dim],
-        norm_class=torch.nn.LayerNorm,
-        norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
+        activation_class=torch.nn.Tanh,
+        out_features=1,
+        num_cells=[256, 256],
     )
 
     # Initialize value weights
@@ -195,25 +175,10 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         value_mlp,
         in_keys=["observation_vector"],
     )
-    support_network = SupportOperator(value_support)
-    value_module_1 = TensorDictModule(
-        module=value_mlp,
-        in_keys=["observation_vector"],
-        out_keys=["state_value_logits"]
-    )
-    value_module_2 = TensorDictModule(
-        module=support_network,
-        in_keys=["state_value_logits"],
-        out_keys=["state_value"]
-    )
 
-    value_module = TensorDictSequential(
-        value_module_1, 
-        value_module_2
-    )
     policy_module = policy_module.to(device)
     value_module = value_module.to(device)
-    return policy_module, value_module, value_support
+    return policy_module, value_module
 
 
 def make_raw_environment():
@@ -309,8 +274,8 @@ def main(cfg: DictConfig):
     template_env = make_environment(cfg)
     #test_td = template_env.reset()
 
-    actor_module, value_module, value_support = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-    loss_module = ClipHGaussPPOLoss(
+    actor_module, value_module = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+    loss_module = ClipPPOLoss(
         actor_module,
         value_module,
         clip_epsilon=cfg.ppo.clip_epsilon,
@@ -318,7 +283,6 @@ def main(cfg: DictConfig):
         entropy_coef=cfg.ppo.entropy_coef,
         critic_coef=cfg.optim.critic_coef,
         normalize_advantage= True,
-        support=value_support
     )
 
     adv_module = GAE(
