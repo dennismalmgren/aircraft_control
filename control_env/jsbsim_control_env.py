@@ -44,7 +44,7 @@ class JSBSimControlEnv(EnvBase):
 
         config = AircraftSimulatorConfig(jsbsim_module_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '../py_modules/JSBSim'))
         self.aircraft_simulator = AircraftJSBSimSimulator(config)
-#velocities/h-dot-fps 
+
         self.observation_spec = Composite(
             u = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             v = Unbounded(shape=(1,), device=device, dtype=torch.float32),
@@ -96,16 +96,16 @@ class JSBSimControlEnv(EnvBase):
         
         self.reward_spec = Composite(
             reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            task_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            smoothness_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            safety_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            alt_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            speed_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            heading_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            roll_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            smoothness_pdot_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            smoothness_qdot_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            smoothness_rdot_reward = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_task = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_smoothness = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_safety = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_speed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_heading = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_roll = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_smoothness_pdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_smoothness_qdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            reward_smoothness_rdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
         )
         self.state_spec = self.observation_spec.clone()
 
@@ -206,18 +206,18 @@ class JSBSimControlEnv(EnvBase):
         smoothness_reward = math.pow(smoothness_pdot_reward * smoothness_qdot_reward * smoothness_rdot_reward , 1/3)
         task_reward = torch.pow(alt_reward * speed_reward * heading_reward * roll_reward, 1/4)
 
-        td_out.set("safety_reward", safety_reward)
-        td_out.set("alt_reward", alt_reward)
-        td_out.set("speed_reward", speed_reward)
-        td_out.set("heading_reward", heading_reward)
-        td_out.set("roll_reward", roll_reward)
-        td_out.set("smoothness_pdot_reward", smoothness_pdot_reward)
-        td_out.set("smoothness_qdot_reward", smoothness_qdot_reward)
-        td_out.set("smoothness_rdot_reward", smoothness_rdot_reward)
+        td_out.set("reward_safety", safety_reward)
+        td_out.set("reward_alt", alt_reward)
+        td_out.set("reward_speed", speed_reward)
+        td_out.set("reward_heading", heading_reward)
+        td_out.set("reward_roll", roll_reward)
+        td_out.set("reward_smoothness_pdot", smoothness_pdot_reward)
+        td_out.set("reward_smoothness_qdot", smoothness_qdot_reward)
+        td_out.set("reward_smoothness_rdot", smoothness_rdot_reward)
         
         #TODO: Add errors as observations.
-        td_out.set("smoothness_reward", smoothness_reward)
-        td_out.set("task_reward", task_reward)
+        td_out.set("reward_smoothness", smoothness_reward)
+        td_out.set("reward_task", task_reward)
         
         #Combine thresholded rewards
         if not torch.isclose(safety_reward, torch.zeros(1, dtype=torch.float32, device=self.device)):

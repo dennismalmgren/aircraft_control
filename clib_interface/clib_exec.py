@@ -2,19 +2,62 @@ import ctypes
 from dataclasses import dataclass
 
 from .aircraft_simulator import AircraftCLibInitialConditions
+        # float X;
+        # float Y;
+        # float Z;
+        # float V_AEX;
+        # float V_AEY;
+        # float V_AEZ;
+        # float V_EX;
+        # float V_EY;
+        # float V_EZ;
+        # float A_EX;
+        # float A_EY;
+        # float A_EZ;
+        # float MY;
+        # float GAMMA;
+        # float CHI;
+        # float ALPHA;
+        # float BETA;
+        # float MACH;
+        # float PSI;
+        # float THETA;
+        # float PHI;
+        # float P;
+        # float Q;
+        # float R;
+        # float PDOT;
+        # float QDOT;
+        # float RDOT;
+        # float FUEL;
 
 class sim_state(ctypes.Structure):
     _fields_ = [
         ('X', ctypes.c_float),
         ('Y', ctypes.c_float),
-        ('Z', ctypes.c_float),        
-        ('V_X', ctypes.c_float),
-        ('V_Y', ctypes.c_float),
-        ('V_Z', ctypes.c_float),        
-        ('SPEED', ctypes.c_float),
-        ('PHI', ctypes.c_float),
+        ('Z', ctypes.c_float),     
+        ('V_AEX', ctypes.c_float),
+        ('V_AEY', ctypes.c_float),
+        ('V_AEZ', ctypes.c_float),       
+        ('V_EX', ctypes.c_float),
+        ('V_EY', ctypes.c_float),
+        ('V_EZ', ctypes.c_float),
+        ('MY', ctypes.c_float),
+        ('GAMMA', ctypes.c_float),
+        ('CHI', ctypes.c_float),  
+        ('ALPHA', ctypes.c_float),
+        ('BETA', ctypes.c_float),
+        ('MACH', ctypes.c_float),  
+        ('PSI', ctypes.c_float),
         ('THETA', ctypes.c_float),
-        ('PSI', ctypes.c_float)
+        ('PHI', ctypes.c_float),  
+        ('P', ctypes.c_float),
+        ('Q', ctypes.c_float),
+        ('R', ctypes.c_float),  
+        ('PDOT', ctypes.c_float),
+        ('QDOT', ctypes.c_float),
+        ('RDOT', ctypes.c_float),
+        ('FUEL', ctypes.c_float)
     ]
 
 @dataclass
@@ -38,13 +81,12 @@ class CLibExec:
         self.my_sim.get_state.argtypes = [ctypes.POINTER(sim_state)]
         self.my_sim.get_state.restype = None
 
-        #TODO: Error codes.
         self.my_sim.step.argtypes = None
         self.my_sim.step.restype = None
 
     def set_initial_conditions(self, initial_conditions: AircraftCLibInitialConditions):
         # TODO: Check types (feet, deg etc)
-        self.my_sim.init_sim(initial_conditions.x_rt90, initial_conditions.y_rt90, initial_conditions.z_rt90, initial_conditions.u_fps, initial_conditions.psi_deg)
+        self.my_sim.init_sim(initial_conditions.x_rt90, initial_conditions.y_rt90, initial_conditions.z_rt90, initial_conditions.v_aex_mps, initial_conditions.psi_deg)
         
 
     def get_simulator_state(self) -> sim_state:

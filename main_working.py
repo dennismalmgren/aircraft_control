@@ -50,7 +50,6 @@ from transforms.altitude_to_digits_transform import AltitudeToDigits
 from transforms.min_max_transform import TimeMinPool, TimeMaxPool
 from transforms.episode_sum_transform import EpisodeSum
 from transforms.difference_transform import Difference
-from transforms.sum_transform import Sum
 from transforms.angular_difference_transform import AngularDifference
 from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
 
@@ -154,19 +153,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
                     "normalized_shape": hidden_size} for hidden_size in [dynamics_dim, dynamics_dim, latent_dim]],
     )
 
-    reward_net_1 = MLP(
-        in_features=latent_dim + num_outputs,
-        activation_class=SoftmaxLayer,
-        activation_kwargs=softmax_activation_kwargs,
-        out_features=1,
-        num_cells=[dynamics_dim, dynamics_dim],
-        activate_last_layer=False,
-        norm_class=torch.nn.LayerNorm,
-        norm_kwargs=[{"elementwise_affine": False,
-                    "normalized_shape": hidden_size} for hidden_size in [dynamics_dim, dynamics_dim]],
-    )
-
-    reward_net_2 = MLP(
+    reward_net = MLP(
         in_features=latent_dim + num_outputs,
         activation_class=SoftmaxLayer,
         activation_kwargs=softmax_activation_kwargs,
@@ -204,15 +191,11 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
     
-    for layer in reward_net_1.modules():
+    for layer in reward_net.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
     
-    for layer in reward_net_2.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.7)
-            layer.bias.data.zero_()
 
     policy_net = torch.nn.Sequential(
         policy_net,
@@ -231,6 +214,12 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         module=dynamics_net,
         in_keys=["observation_encoded", "action"],
         out_keys=["next_observation_predicted"]
+    )
+
+    reward_module = TensorDictModule(
+        module=reward_net,
+        in_keys=["observation_encoded", "action"],
+        out_keys=["next_reward_predicted"]
     )
 
     policy_module = TensorDictModule(
@@ -262,78 +251,40 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=InteractionType.RANDOM,
     )
 
-   
-    value_names = ["safety", "scale_1", "scale_2"]
-    vmins = [cfg.network.vmin_1, cfg.network.vmin_2, cfg.network.vmin_3]
-    vmaxs = [cfg.network.vmax_1, cfg.network.vmax_2, cfg.network.vmax_3]
-    rmins = [cfg.network.rmin_1, cfg.network.rmin_2, cfg.network.rmin_3]
-    rmaxs = [cfg.network.rmax_1, cfg.network.rmax_2, cfg.network.rmax_3]
     nbins = cfg.network.nbins
+    Vmin = cfg.network.vmin
+    Vmax = cfg.network.vmax
+    dk = (Vmax - Vmin) / (nbins - 4)
+    Ktot = dk * nbins
+    Vmax = math.ceil(Vmin + Ktot)
 
-    value_modules = []
-    value_supports = []
+    support = torch.linspace(Vmin, Vmax, nbins)
 
-    for value_name, Vmin, Vmax in zip(value_names, vmins, vmaxs):
-        dk = (Vmax - Vmin) / (nbins - 4)
-        Ktot = dk * nbins
-        Vmax = math.ceil(Vmin + Ktot)
-
-        value_support = torch.linspace(Vmin, Vmax, nbins)
-        value_net = MLP(
-            in_features=latent_dim, 
-            activation_class=torch.nn.Mish,
-            out_features=nbins,  
-            num_cells=[value_dim, value_dim],
-            norm_kwargs=[{"elementwise_affine": False,
-                        "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
-        )
-
-        for layer in value_net.modules():
-            if isinstance(layer, torch.nn.Linear):
-                torch.nn.init.orthogonal_(layer.weight, 0.7)
-                layer.bias.data.zero_()
-
-        value_module_1 = TensorDictModule(
-            in_keys=["observation_encoded"],
-            out_keys=[f"state_value_{value_name}_logits"],
-            module=value_net,
-        )
-        support_network = SupportOperator(value_support)
-        value_module_2 = TensorDictModule(support_network, in_keys=[f"state_value_{value_name}_logits"], out_keys=[f"state_value_{value_name}"])
-        value_module = TensorDictSequential(value_module_1, value_module_2)
-        value_module = value_module.to(device)
-        value_modules.append(value_module)
-        value_support = value_support.to(device)
-        value_supports.append(support)
-
-        reward_modules = []
-        reward_module_1 = TensorDictModule(
-            module=reward_net_1,
-            in_keys=["observation_encoded", "action"],
-            out_keys=["next_reward_scale_1_predicted"]
-        )
-        reward_module_2 = TensorDictModule(
-            module=reward_net_2,
-            in_keys=["observation_encoded", "action"],
-            out_keys=["next_reward_scale_2_predicted"]
-        )
-        reward_modules.append(reward_module_1)
-        reward_modules.append(reward_module_2)
-        reward_module = TensorDictSequential(*reward_modules)
-
-
-    value_module_final = TensorDictModule(
-        module=lambda x, y: x + y,
-        in_keys=[f"state_value_{value_name}" for value_name in value_names],
-        out_keys=["state_value"]
+    value_net = MLP(
+        in_features=latent_dim, 
+        activation_class=torch.nn.Mish,
+        out_features=nbins,  
+        num_cells=[value_dim, value_dim],
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
     )
+
+    for layer in value_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+
+    value_module_1 = TensorDictModule(
+        in_keys=["observation_encoded"],
+        out_keys=["state_value_logits"],
+        module=value_net,
+    )
+    support_network = SupportOperator(support)
+    value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
+    value_module = TensorDictSequential(value_module_1, value_module_2)
     
-    value_module = TensorDictSequential(
-        [*value_modules, value_module_final]
-    )
-
-    value_module = value_module.to(device)
     actor_module = actor_module.to(device)
+    value_module = value_module.to(device)
     support = support.to(device)
     encoder_module = encoder_module.to(device)
     dynamics_module = dynamics_module.to(device)
@@ -341,7 +292,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     policy_module = policy_module.to(device)
     latent_actor_module = latent_actor_module.to(device)
 
-    return actor_module, value_modules, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module, reward_modules
+    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module
 
 
 
@@ -356,10 +307,6 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            #TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=10000),
-            #TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=10000),
-            #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
-            #Lets try 3d-encoding later
             AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
                                 out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
                                             add_cosine=False, base_scale=0.1),
@@ -369,14 +316,10 @@ def apply_env_transforms(env, cfg, is_train = True):
             PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
             AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
 
-            #CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
-            #                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
-            #                        out_key="observation_vector", del_keys=False),    
             CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
                                 "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
                     "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             out_key="observation_vector", del_keys=False),        
-            #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -428,8 +371,6 @@ def main(cfg: DictConfig):
         else torch.device("cpu")
     )
 
-    use_torch_compile = cfg.use_torch_compile
-
     torch.manual_seed(cfg.random.seed)
     np.random.seed(cfg.random.seed)
     random.seed(cfg.random.seed)
@@ -448,13 +389,12 @@ def main(cfg: DictConfig):
         )
 
     template_env = make_environment(cfg)
-    #test_td = template_env.reset()
 
-    actor_module, value_modules, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module, reward_modules = \
+    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module= \
         make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
     loss_module = ClipHGaussWorldModelPPOLoss(
         actor_network=learning_actor_module,
-        critic_networks=value_modules,
+        critic_network=value_module,
         encoder_network=encoder_module,
         dynamics_network=dynamics_module,
         reward_network=reward_module,
@@ -462,10 +402,9 @@ def main(cfg: DictConfig):
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
         normalize_advantage= True,
-        support=supports
+        support=support
     )
-    adv_modules = []
-    for value_module in 
+
     adv_module = GAE(
         gamma=cfg.ppo.gamma,
         lmbda=cfg.ppo.gae_lambda,
@@ -550,27 +489,6 @@ def main(cfg: DictConfig):
 
     losses = TensorDict({}, batch_size=[cfg_loss_ppo_epochs, num_mini_batches])
     norms = TensorDict({}, batch_size=[cfg_loss_ppo_epochs, num_mini_batches])
-    # K = 100
-    # def planner(actor_module, encoder_module, dynamics_module, reward_module, value_module):
-    #     def plan(observation_vector: torch.Tensor):
-    #         observation_vector = observation_vector.expand(K, -1, -1)
-    #         observation_encoded, loc, var, action, log_prob = actor_module(observation_vector)
-    #         next_states = dynamics_module(observation_encoded, action)
-    #         next_reward = reward_module(observation_encoded, action) #todo: incorporate next state into the reward prediction?
-    #         next_value_logits, next_value_value = value_module(next_states)
-    #         value_estimated = next_reward + 0.995 * next_value_value
-    #         action_index = value_estimated.argmax(dim=0)
-    #         action_index = action_index.unsqueeze(0).expand(-1, -1, 4)
-    #         action_sampled = action.gather(0, action_index).squeeze(0)
-    #         return action_sampled
-        
-    #     planning_module = TensorDictModule(
-    #         module=plan,
-    #         in_keys=["observation_vector"],
-    #         out_keys=["action"]
-    #     )
-    #     return planning_module
-    
     for i, data in enumerate(collector):
 
         log_info = {}
@@ -579,21 +497,7 @@ def main(cfg: DictConfig):
         collected_frames += frames_in_batch
         pbar.update(frames_in_batch)
         episode_rewards = data["next", "episode_reward"][data["next", "done"]]
-        #episode_pdot = data["next", "episode_pdot"][data["next", "done"]]
-        #episode_p = data["next", "episode_p"][data["next", "done"]]
-        #episode_min_mach = data["next", "episode_min_mach"][data["next", "done"]]
-        #episode_max_mach = data["next", "episode_max_mach"][data["next", "done"]]
         if len(episode_rewards) > 0:
-            #episode_length = data["next", "step_count"][data["next", "done"]]
-            # log_info.update(
-            #     {
-            #         "train/pdot": (episode_pdot / episode_length).mean().item(),
-            #         "train/p": (episode_p / episode_length).mean().item(),
-            #         "train/episode_length": episode_length.float().mean().item(), #mean?
-            #      #   "train/episode_min_mach": episode_min_mach.mean().item(),
-            #     #    "train/episode_max_mach": episode_max_mach.mean().item(),
-            #     }
-            # )
             for reward_key in reward_keys:
                 log_info.update(
                     {
@@ -684,15 +588,15 @@ def main(cfg: DictConfig):
 
             actor_module.train()
             eval_done_indices = eval_results["next", "done"][..., 0].unsqueeze(-1)
-            if torch.sum(eval_done_indices.float()) > 0.0:                
-                for reward_key in reward_keys:
-                    log_info.update(
-                        {
-                            f"eval/{reward_key}": eval_results["next", "episode_" + reward_key][eval_done_indices
-                            ].mean().item()
-                        }
-                    )
-
+            for reward_key in reward_keys:
+                log_info.update(
+                    {
+                        f"eval/{reward_key}": eval_results["next", "episode_" + reward_key][
+                            eval_done_indices
+                        ].mean().item()
+                    }
+                )
+           
         if ((i - 1) * frames_in_batch + loaded_frames) // cfg_logger_save_interval < \
            (i * frames_in_batch + loaded_frames) // cfg_logger_save_interval:
                 savestate = {

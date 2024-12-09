@@ -12,36 +12,42 @@ class AircraftSimulatorConfig:
 @dataclass
 class SimulatorState:
     # TODO: Merge with api
-    position_x_relative_m: float
-    position_y_relative_m: float
-    position_z_relative_m: float
+    x: float
+    y: float
+    z: float
     
-    velocity_north_m_sec: float
-    velocity_east_m_sec: float
-    velocity_down_m_sec: float
-    velocity_mach: float
+    v_aex: float
+    v_aey: float
+    v_aez: float
 
-    acceleration_udot_m_sec2: float
-    acceleration_vdot_m_sec2: float
-    acceleration_wdot_m_sec2: float
-    attitude_psi_rad: float
-    attitude_theta_rad: float
-    attitude_phi_rad: float
-    velocity_p_rad_sec: float
-    velocity_q_rad_sec: float
-    velocity_r_rad_sec: float
-    acceleration_pdot_rad_sec2: float
-    acceleration_qdot_rad_sec2: float
-    acceleration_rdot_rad_sec2: float
-    position_lat_geod_rad: float
-    position_long_gc_rad: float
-    position_h_sl_m: float
-    rho_kg_m3: float
-    a_m_sec: float
-    crosswind_m_sec: float
-    headwind_m_sec: float
-    vc_m_sec: float
-    vg_m_sec: float
+    v_ex: float
+    v_ey: float
+    v_ez: float
+
+    a_ex: float
+    a_ey: float
+    a_ez: float
+
+    my: float
+    gamma: float
+    chi: float
+    alpha: float
+    beta: float
+    mach: float
+
+    psi: float
+    theta: float
+    phi: float
+    
+    p: float
+    q: float
+    r: float
+
+    pdot: float
+    qdot: float
+    rdot: float
+
+    fuel: float
 
 @dataclass
 class AircraftCLibInitialConditions:
@@ -49,64 +55,18 @@ class AircraftCLibInitialConditions:
     y_rt90: float = 60.0  # geodetic latitude  [deg]
     z_rt90: float = 6000      # altitude above mean sea level [ft]
     psi_deg: float = 0.0   # initial (true) heading [deg] (0, 360)
-    #TODO: which velocities etc?
-    u_fps: float = 800.0        # body frame x-axis velocity [ft/s]  (-2200, 2200)
+    u_mps: float = 800.0        # body frame x-axis velocity [ft/s]  (-2200, 2200)
    
 
 class AircraftCLibSimulator:
-    #TODO: Revise these.
-    state_properties = [
-        #linear velocity
-        CLibCatalog.velocities_u_fps,
-        CLibCatalog.velocities_v_fps,
-        CLibCatalog.velocities_w_fps,
-        #NED velocity
-        CLibCatalog.velocities_v_north_fps,
-        CLibCatalog.velocities_v_east_fps,
-        CLibCatalog.velocities_v_down_fps,
-        #linear acceleration
-        CLibCatalog.accelerations_udot_ft_sec2,
-        CLibCatalog.accelerations_vdot_ft_sec2,
-        CLibCatalog.accelerations_wdot_ft_sec2,
-        #attitude 
-        CLibCatalog.attitude_phi_rad,
-        CLibCatalog.attitude_theta_rad,
-        CLibCatalog.attitude_psi_rad,
-        #angular velocity
-        CLibCatalog.velocities_p_rad_sec,
-        CLibCatalog.velocities_q_rad_sec,
-        CLibCatalog.velocities_r_rad_sec,
-        #angular acceleration
-        CLibCatalog.accelerations_pdot_rad_sec2,
-        CLibCatalog.accelerations_qdot_rad_sec2,
-        CLibCatalog.accelerations_rdot_rad_sec2,
-        #navigation
-        CLibCatalog.position_lat_geod_rad,
-        CLibCatalog.position_long_gc_rad,
-        CLibCatalog.position_h_sl_ft,
-        #JSBSimCatalog.velocities_h_dot_fps,
-        #environmental
-        CLibCatalog.atmosphere_rho_slugs_ft3,
-        CLibCatalog.atmosphere_a_fps,
-        CLibCatalog.atmosphere_crosswind_fps,
-        CLibCatalog.atmosphere_headwind_fps,
-        #performance
-        CLibCatalog.velocities_vc_fps,
-        CLibCatalog.velocities_vg_fps,
-        #speed
-        CLibCatalog.velocities_mach
-    ]
-
+    
     def __init__(self, config: AircraftSimulatorConfig):
-        self.jsbsim_exec = None
+        self.clib_exec = None
         self.sim_freq = config.sim_freq
-        self.jsbsim_module_dir = config.jsbsim_module_dir
-        self.aircraft_model = config.aircraft_model 
         self.dt = 1.0 / self.sim_freq
-        self.jsbsim_catalog = CLibCatalog()
         
     def reset(self, ic: AircraftCLibInitialConditions):
-        self.jsbsim_exec = jsbsim.FGFDMExec(self.jsbsim_module_dir)
+        self.clib_exec = jsbsim.FGFDMExec(self.jsbsim_module_dir)
         self.jsbsim_exec.set_debug_level(0)
         self.jsbsim_exec.load_model(self.aircraft_model)
         self.jsbsim_exec.set_dt(self.dt)
@@ -128,12 +88,11 @@ class AircraftCLibSimulator:
     
     def step(self, control_action: np.ndarray): 
         """
-        control_action: np.ndarray = [throttle, aileron, elevator, rudder]
+        control_action: np.ndarray = [roll, pitch, throttle]
         """
-        aileron = control_action[0]
-        elevator = control_action[1]
-        rudder = control_action[2]
-        throttle = control_action[3]
+        roll = control_action[0]
+        pitch = control_action[1]
+        throttle = control_action[2]
         self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_throttle_cmd_norm.name, throttle)
         self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_aileron_cmd_norm.name, aileron)
         self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_elevator_cmd_norm.name, elevator)
