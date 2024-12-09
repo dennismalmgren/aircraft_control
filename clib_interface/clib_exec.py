@@ -2,34 +2,6 @@ import ctypes
 from dataclasses import dataclass
 
 from .aircraft_simulator import AircraftCLibInitialConditions
-        # float X;
-        # float Y;
-        # float Z;
-        # float V_AEX;
-        # float V_AEY;
-        # float V_AEZ;
-        # float V_EX;
-        # float V_EY;
-        # float V_EZ;
-        # float A_EX;
-        # float A_EY;
-        # float A_EZ;
-        # float MY;
-        # float GAMMA;
-        # float CHI;
-        # float ALPHA;
-        # float BETA;
-        # float MACH;
-        # float PSI;
-        # float THETA;
-        # float PHI;
-        # float P;
-        # float Q;
-        # float R;
-        # float PDOT;
-        # float QDOT;
-        # float RDOT;
-        # float FUEL;
 
 class sim_state(ctypes.Structure):
     _fields_ = [

@@ -2,6 +2,7 @@ from typing import Union, Optional, List
 from dataclasses import dataclass
 import os
 import math
+import random
 
 import torch
 from torchrl.envs import EnvBase
@@ -80,7 +81,7 @@ class JSBSimControlEnv(EnvBase):
             target_speed = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
             target_heading = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
         )
-
+        
         #note that throttle is 0->1 in sim.
         #aileron, elevator, rudder, throttle
         self.action_spec = Bounded(low = torch.tensor([-1.0, -1.0, -1.0, 0.0]),
@@ -158,12 +159,6 @@ class JSBSimControlEnv(EnvBase):
         else:
             safety_reward = torch.tensor(0.0, dtype=torch.float32, device=self.device)
 
-        alt_reward = 0.0
-        speed_reward = 0.0
-        heading_reward = 0.0
-        roll_reward = 0.0
-        total_reward = 0.0
-        smoothness_reward = 0.0
         task_reward = torch.zeros(1, dtype=torch.float32, device=self.device)
 
         alt_error = torch.tensor(simulator_state.position_h_sl_m - self._target_altitude, dtype=torch.float32, device=self.device)
@@ -305,18 +300,23 @@ class JSBSimControlEnv(EnvBase):
             aircraft_ic = self.curriculum_manager.get_initial_conditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
-        self._target_altitude = torch.tensor(simulator_state.position_h_sl_m, dtype=torch.float32, device=self.device)
+        delta_alt = random.uniform(-1.0, 1.0)
+        delta_alt = delta_alt * 300.0
+        self._target_altitude = torch.tensor(simulator_state.position_h_sl_m + delta_alt, dtype=torch.float32, device=self.device) #climb 300 m
         self._tolerance_altitude = None #100
         self._target_speed = simulator_state.velocity_mach #speed up a little
         self._tolerance_speed = None #0.1
-        self._target_heading = torch.tensor(simulator_state.attitude_psi_rad, dtype=torch.float32, device=self.device)
+        delta_radpos = random.uniform(-1.0, 1.0)
+        delta_rad = delta_radpos * 30
+        target_psi = (delta_rad * math.pi / 180.0 + simulator_state.attitude_psi_rad) % (2 * math.pi)
+        self._target_heading = torch.tensor(target_psi, dtype=torch.float32, device=self.device)
         self._tolerance_heading = None #5 * torch.pi / 180 #three degrees
         self._target_roll = torch.tensor(0., dtype=torch.float32, device=self.device)
         self._tolerance_roll = None
 
-        self._error_scale_alt = torch.tensor(350.0, dtype=torch.float32, device=self.device)  # m'
-        self._error_scale_speed = torch.tensor(0.5, dtype=torch.float32, device=self.device)
-        self._error_scale_heading = torch.ones(1, dtype=torch.float32, device=self.device) * torch.pi/2
+        self._error_scale_alt = torch.tensor(100.0, dtype=torch.float32, device=self.device)  # m'
+        self._error_scale_speed = torch.tensor(0.1, dtype=torch.float32, device=self.device)
+        self._error_scale_heading = torch.ones(1, dtype=torch.float32, device=self.device) * torch.pi/4
         self._error_scale_roll = torch.tensor(0.25, dtype=torch.float32, device=self.device)
         
 

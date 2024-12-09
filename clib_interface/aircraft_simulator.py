@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 import numpy as np
 from enum import Enum
-from .catalog import CLibCatalog
+from .clib_exec import CLibExec
 
 @dataclass
 class AircraftSimulatorConfig:
@@ -66,10 +66,7 @@ class AircraftCLibSimulator:
         self.dt = 1.0 / self.sim_freq
         
     def reset(self, ic: AircraftCLibInitialConditions):
-        self.clib_exec = jsbsim.FGFDMExec(self.jsbsim_module_dir)
-        self.jsbsim_exec.set_debug_level(0)
-        self.jsbsim_exec.load_model(self.aircraft_model)
-        self.jsbsim_exec.set_dt(self.dt)
+        self.clib_exec = CLibExec()
 
         self._set_initial_conditions(ic)
 
@@ -145,18 +142,7 @@ class AircraftCLibSimulator:
         return simstate
 
     def _set_initial_conditions(self, ic: AircraftCLibInitialConditions):
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_long_gc_deg.name, ic.long_gc_deg)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_lat_geod_deg.name, ic.lat_geod_deg)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_h_sl_ft.name, ic.h_sl_ft)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_psi_true_deg.name, ic.psi_true_deg)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_u_fps.name, ic.u_fps)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_v_fps.name, ic.v_fps)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_w_fps.name, ic.w_fps)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_p_rad_sec.name, ic.p_rad_sec)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_q_rad_sec.name, ic.q_rad_sec)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_r_rad_sec.name, ic.r_rad_sec)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_roc_fpm.name, ic.roc_fpm)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.ic_terrain_elevation_ft.name, ic.terrain_elevation_ft)
+        self.clib_exec.set_initial_conditions(ic)
 
     def close(self):
         """ Closes the simulation and any plots. """
