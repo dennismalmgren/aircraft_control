@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: aircraft_control_error_codes_diff
+  exp_name: aircraft_control_codes_hybrid
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000

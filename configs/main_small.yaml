@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: ppo_jepa_mse_larger
+  exp_name: ppo_hybrid_single_small
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000
@@ -23,7 +23,7 @@ logger:
 
 # collector
 collector:
-  total_frames: 1_000_000
+  total_frames: 4_000_000
   frames_per_batch: 2048 #max_episode_steps * env_per_collector
   #frames_per_batch: 2_000 #max_episode_steps * env_per_collector
   device: cpu

@@ -23,7 +23,8 @@ from torchrl.envs.transforms import (
     InitTracker,
     StepCounter,
     RewardSum,
-    RewardScaling
+    RewardScaling,
+    ClipTransform
 )
 from torchrl.envs import (
     ParallelEnv,
@@ -308,19 +309,25 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
+            PlanarAngleCosSin(in_keys=["psi", "theta", "phi"], out_keys=["psi_cossin", "theta_cossin", "phi_cossin"]),
             Difference(in_keys=["target_alt", "alt", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
-            AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
-            AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
-                                out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code", "altitude_error_code"], 
-                                            add_cosine=False, base_scale=0.1),
-            AltitudeToScaleCode(in_keys=["speed_error", "mach"], out_keys=["speed_error_code", "mach_code"], add_cosine=False, base_scale=0.01),
             AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-
-            CatTensors(in_keys=["altitude_error_code", "speed_error_code", "heading_error", "alt_code", "mach_code", "rotation", 
-                                "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
+            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"], add_cosine=False, base_scale=100.0,num_wavelengths=4 ),
+            CatTensors(in_keys=["altitude_error", "speed_error", "alt_code", "mach", 
+                                "u", "v", "w", "udot", "vdot", "wdot",
                     "p", "q", "r", "pdot", "qdot", "rdot"],
-            out_key="observation_vector", del_keys=False),        
+            out_key="norm_vector", del_keys=False),
+            VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
+            ClipTransform(in_keys=["norm_vector"], low=-10, high=10),
+            CatTensors(in_keys=["norm_vector", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
+#            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
+            # AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4 ),
+            # AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
+            #                     out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code", "altitude_error_code"], 
+            #                                 add_cosine=False, base_scale=10.0,num_wavelengths=4),
+            # AltitudeToScaleCode(in_keys=["speed_error", "mach"], out_keys=["speed_error_code", "mach_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4),
+
+        
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -362,7 +369,7 @@ def load_model_state(model_name, run_folder_name=""):
     loaded_state = torch.load(load_model_dir + f"{model_load_filename}")
     return loaded_state
 
-@hydra.main(version_base="1.1", config_path="configs", config_name="main")
+@hydra.main(version_base="1.1", config_path="configs", config_name="main_small")
 def main(cfg: DictConfig):
     device = (
         torch.device("cuda:0")
