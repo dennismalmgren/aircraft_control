@@ -356,10 +356,6 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            #TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=10000),
-            #TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=10000),
-            #RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
-            #Lets try 3d-encoding later
             AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
                                 out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
                                             add_cosine=False, base_scale=0.1),
@@ -369,14 +365,10 @@ def apply_env_transforms(env, cfg, is_train = True):
             PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
             AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
 
-            #CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
-            #                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
-            #                        out_key="observation_vector", del_keys=False),    
-            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
+            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "rotation", 
                                 "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
                     "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             out_key="observation_vector", del_keys=False),        
-            #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
             RewardSum(in_keys=reward_keys),
         )
     )

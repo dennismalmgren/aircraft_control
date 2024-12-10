@@ -17,13 +17,13 @@ logger:
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000
-  eval_interval: 500_000
+  eval_interval: 50_000
   num_test_episodes: 5
 
 
 # collector
 collector:
-  total_frames: 1_000_000
+  total_frames: 4_000_000
   frames_per_batch: 2048 #max_episode_steps * env_per_collector
   #frames_per_batch: 2_000 #max_episode_steps * env_per_collector
   device: cpu

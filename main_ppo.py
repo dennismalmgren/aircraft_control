@@ -124,7 +124,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         in_features=input_shape[-1],
         activation_class=torch.nn.Tanh,
         out_features=num_outputs,  # predict only loc
-        num_cells=[512, 512],
+        num_cells=[256, 256],
     )
 
     # Initialize policy weights
@@ -161,7 +161,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         in_features=input_shape[-1],
         activation_class=torch.nn.Tanh,
         out_features=1,
-        num_cells=[512, 512],
+        num_cells=[256, 256],
     )
 
     # Initialize value weights
