@@ -319,7 +319,7 @@ def apply_env_transforms(env, cfg, is_train = True):
             out_key="norm_vector", del_keys=False),
             VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
             ClipTransform(in_keys=["norm_vector"], low=-10, high=10),
-            CatTensors(in_keys=["norm_vector", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
+            CatTensors(in_keys=["norm_vector", "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
 #            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
             # AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4 ),
             # AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
@@ -369,7 +369,7 @@ def load_model_state(model_name, run_folder_name=""):
     loaded_state = torch.load(load_model_dir + f"{model_load_filename}")
     return loaded_state
 
-@hydra.main(version_base="1.1", config_path="configs", config_name="main_small")
+@hydra.main(version_base="1.1", config_path="configs", config_name="main")
 def main(cfg: DictConfig):
     device = (
         torch.device("cuda:0")
