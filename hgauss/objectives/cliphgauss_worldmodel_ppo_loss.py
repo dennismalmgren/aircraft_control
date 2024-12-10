@@ -205,22 +205,25 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
             device = None
 
         self.register_buffer("clip_epsilon", torch.tensor(clip_epsilon, device=device))
-        self.register_buffer("support", support.to(device))
-        atoms = self.support.numel()
-        Vmin = self.support.min()
-        Vmax = self.support.max()
-        delta_z = (Vmax - Vmin) / (atoms - 1)
-        self.register_buffer(
-            "stddev", (0.75 * delta_z).unsqueeze(-1)
-        )
-        self.register_buffer(
-            "support_plus",
-            self.support + delta_z / 2
-        )
-        self.register_buffer(
-            "support_minus",
-            self.support - delta_z / 2
-        )
+        if support is not None:
+            self.register_buffer("support", support.to(device))
+            atoms = self.support.numel()
+            Vmin = self.support.min()
+            Vmax = self.support.max()
+            delta_z = (Vmax - Vmin) / (atoms - 1)
+            self.register_buffer(
+                "stddev", (0.75 * delta_z).unsqueeze(-1)
+            )
+            self.register_buffer(
+                "support_plus",
+                self.support + delta_z / 2
+            )
+            self.register_buffer(
+                "support_minus",
+                self.support - delta_z / 2
+            )
+        else:
+            self.support = None
 
     @property
     def _clip_bounds(self):
@@ -360,17 +363,23 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         state_value = state_value_td.get(
             self.tensor_keys.value, None
         )  # TODO: None soon to be removed
-        state_value_logits = state_value_td.get("state_value_logits")
+        if self.support is not None:
+            state_value_logits = state_value_td.get("state_value_logits")
 
-        if state_value is None:
-            raise KeyError(
-                f"the key {self.tensor_keys.value} was not found in the critic output tensordict. "
-                f"Make sure that the value_key passed to PPO is accurate."
-            )
+            if state_value is None:
+                raise KeyError(
+                    f"the key {self.tensor_keys.value} was not found in the critic output tensordict. "
+                    f"Make sure that the value_key passed to PPO is accurate."
+                )
 
-        target_return_logits = self.construct_gauss_dist(target_return)
-        loss_value = torch.nn.functional.cross_entropy(state_value_logits, target_return_logits, reduction="none")
-
+            target_return_logits = self.construct_gauss_dist(target_return)
+            loss_value = torch.nn.functional.cross_entropy(state_value_logits, target_return_logits, reduction="none")
+        else:
+            loss_value = distance_loss(
+            target_return,
+            state_value,
+            loss_function="l2",
+        )
         clip_fraction = None
         if self.clip_value:
             loss_value, clip_fraction = _clip_value_loss(

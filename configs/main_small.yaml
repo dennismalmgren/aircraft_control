@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: ppo_maneuver_no_vec_hgauss_fast
+  exp_name: ppo_jepa_mse_larger
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000
@@ -36,7 +36,7 @@ ppo:
   clip_epsilon: 0.2
   entropy_coef: 0.0
   epochs: 10
-  loss_critic_type: l2 #l2, hgauss
+  loss_critic_type: hgauss #l2, hgauss
 
 network:
   nbins: 101
@@ -46,17 +46,16 @@ network:
   rmax: 1
   
 env:
-  max_time_steps_train: 1200
-  max_time_steps_eval: 2400
+  max_time_steps_train: 600
+  max_time_steps_eval: 1200
   
 optim:
   lr_policy: 3.0e-4
   lr_value: 3.0e-3
-  critic_coef: 1.0
   weight_decay: 0.0
   #mini_batch_size: 2000
   mini_batch_size: 512
-#  max_grad_norm: 10.0
+  max_grad_norm: 10.0
   anneal_lr: false
   anneal_clip_epsilon: false
   eps: 1.0e-4

@@ -23,7 +23,8 @@ from torchrl.envs.transforms import (
     InitTracker,
     StepCounter,
     RewardSum,
-    RewardScaling
+    RewardScaling,
+    ClipTransform
 )
 from torchrl.envs import (
     ParallelEnv,
@@ -119,7 +120,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
        # 'safe_tanh': False
     }
 
-    enc_dim = 4096
+    enc_dim = 1024
     latent_dim = 512
     softmax_dim = 8
     dynamics_dim = 512
@@ -258,12 +259,12 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     Ktot = dk * nbins
     Vmax = math.ceil(Vmin + Ktot)
 
-    support = torch.linspace(Vmin, Vmax, nbins)
+    #support = torch.linspace(Vmin, Vmax, nbins)
 
     value_net = MLP(
         in_features=latent_dim, 
         activation_class=torch.nn.Mish,
-        out_features=nbins,  
+        out_features=1,  
         num_cells=[value_dim, value_dim],
         norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
@@ -275,25 +276,25 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
-    value_module_1 = TensorDictModule(
+    value_module = TensorDictModule(
         in_keys=["observation_encoded"],
-        out_keys=["state_value_logits"],
+        out_keys=["state_value"],
         module=value_net,
     )
-    support_network = SupportOperator(support)
-    value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
-    value_module = TensorDictSequential(value_module_1, value_module_2)
+    #support_network = SupportOperator(support)
+    #value_module_2 = TensorDictModule(support_network, in_keys=["state_value_logits"], out_keys=["state_value"])
+    #value_module = TensorDictSequential(value_module_1, value_module_2)
     
     actor_module = actor_module.to(device)
     value_module = value_module.to(device)
-    support = support.to(device)
+    #support = support.to(device)
     encoder_module = encoder_module.to(device)
     dynamics_module = dynamics_module.to(device)
     reward_module = reward_module.to(device)
     policy_module = policy_module.to(device)
     latent_actor_module = latent_actor_module.to(device)
 
-    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module
+    return actor_module, value_module, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module
 
 
 
@@ -308,19 +309,12 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
-                                out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
-                                            add_cosine=False, base_scale=0.1),
-            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
-            Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
-            PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
-            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-
-            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
-                                "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
-                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
+             Difference(in_keys=["target_alt", "alt", "target_speed", "mach", "target_heading", "psi"], out_keys=["altitude_error", "speed_error", "heading_error"]),
+            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt", "mach", "psi", "theta", "phi", 
+                                "u", "v", "w", "udot", "vdot", "wdot", "p", "q", "r", "pdot", "qdot", "rdot"],
             out_key="observation_vector", del_keys=False),        
+            VecNorm(in_keys=["observation_vector"], decay=0.99999, eps=1e-2),
+            ClipTransform(in_keys=["observation_vector"], low=-10, high=10),
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -362,7 +356,7 @@ def load_model_state(model_name, run_folder_name=""):
     loaded_state = torch.load(load_model_dir + f"{model_load_filename}")
     return loaded_state
 
-@hydra.main(version_base="1.1", config_path="configs", config_name="main")
+@hydra.main(version_base="1.1", config_path="configs", config_name="main_small")
 def main(cfg: DictConfig):
     device = (
         torch.device("cuda:0")
@@ -391,7 +385,7 @@ def main(cfg: DictConfig):
 
     template_env = make_environment(cfg)
 
-    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module= \
+    actor_module, value_module, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module= \
         make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
     loss_module = ClipHGaussWorldModelPPOLoss(
         actor_network=learning_actor_module,
@@ -403,7 +397,7 @@ def main(cfg: DictConfig):
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
         normalize_advantage= True,
-        support=support
+        support=None
     )
 
     adv_module = GAE(
