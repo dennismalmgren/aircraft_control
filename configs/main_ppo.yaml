@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: ppo_maneuver_no_vec_hgauss_fast
+  exp_name: ppo_standard_retake
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000
@@ -51,8 +51,8 @@ env:
   
 optim:
   lr_policy: 3.0e-4
-  lr_value: 3.0e-3
-  critic_coef: 1.0
+  lr_value: 3.0e-4
+  critic_coef: 0.25
   weight_decay: 0.0
   #mini_batch_size: 2000
   mini_batch_size: 512

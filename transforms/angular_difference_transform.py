@@ -18,14 +18,10 @@ def angular_difference(target_angle: torch.Tensor, current_angle: torch.Tensor):
     - theta2: Desired heading (tensor)
 
     Returns:
-    - error: Signed heading error in radians (tensor)
+    - error: cosine and sine of error
     """
-    cos_current = torch.cos(current_angle)
-    sin_current = torch.sin(current_angle)
-    cos_target = torch.cos(target_angle)
-    sin_target = torch.sin(target_angle)
-    cos_error = cos_current * cos_target + sin_current * sin_target
-    sin_error = cos_current * sin_target - sin_current * cos_target
+    cos_error = torch.cos(target_angle - current_angle)
+    sin_error = torch.sin(target_angle - current_angle)
     error = torch.cat([cos_error, sin_error], dim=-1)
 
     return error

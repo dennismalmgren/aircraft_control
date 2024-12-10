@@ -23,7 +23,8 @@ from torchrl.envs.transforms import (
     InitTracker,
     StepCounter,
     RewardSum,
-    RewardScaling
+    RewardScaling,
+    ClipTransform
 )
 from torchrl.envs import (
     ParallelEnv,
@@ -308,19 +309,12 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            Difference(in_keys=["target_alt", "alt", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
-            AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
-            AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
-                                out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code", "altitude_error_code"], 
-                                            add_cosine=False, base_scale=0.1),
-            AltitudeToScaleCode(in_keys=["speed_error", "mach"], out_keys=["speed_error_code", "mach_code"], add_cosine=False, base_scale=0.01),
-            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-
-            CatTensors(in_keys=["altitude_error_code", "speed_error_code", "heading_error", "alt_code", "mach_code", "rotation", 
-                                "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
-                    "p", "q", "r", "pdot", "qdot", "rdot"],
+            Difference(in_keys=["target_alt", "alt", "target_speed", "mach", "target_heading", "psi"], out_keys=["altitude_error", "speed_error", "heading_error"]),
+            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt", "mach", "psi", "theta", "phi", 
+                                "u", "v", "w", "udot", "vdot", "wdot", "p", "q", "r", "pdot", "qdot", "rdot"],
             out_key="observation_vector", del_keys=False),        
+            VecNorm(in_keys=["observation_vector"], decay=0.99999, eps=1e-2),
+            ClipTransform(in_keys=["observation_vector"], low=-10, high=10),
             RewardSum(in_keys=reward_keys),
         )
     )

@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: aircraft_control_error_codes_diff
+  exp_name: ppo_maneuver_no_vec_hgauss_fast
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000
@@ -24,7 +24,7 @@ logger:
 # collector
 collector:
   total_frames: 80_000_000
-  frames_per_batch: 40_000 #max_episode_steps * env_per_collector
+  frames_per_batch: 40000 #max_episode_steps * env_per_collector
   #frames_per_batch: 2_000 #max_episode_steps * env_per_collector
   device: cpu
   env_per_collector: 20
@@ -35,8 +35,8 @@ ppo:
   gamma: 0.99
   clip_epsilon: 0.2
   entropy_coef: 0.0
-  epochs: 15
-  loss_critic_type: hgauss #l2, hgauss
+  epochs: 10
+  loss_critic_type: l2 #l2, hgauss
 
 network:
   nbins: 101
@@ -52,10 +52,11 @@ env:
 optim:
   lr_policy: 3.0e-4
   lr_value: 3.0e-3
+  critic_coef: 1.0
   weight_decay: 0.0
   #mini_batch_size: 2000
   mini_batch_size: 8000
-  max_grad_norm: 10.0
+#  max_grad_norm: 10.0
   anneal_lr: false
   anneal_clip_epsilon: false
   eps: 1.0e-4
