@@ -13,7 +13,7 @@ num_eval_envs: 5
 logger:
   backend: wandb
   mode: online
-  exp_name: ppo_vanilla_maneuver_hgauss
+  exp_name: ppo_maneuver_no_vec_mse
   project: aircraft_control_demo
   test_interval: 100_000
   save_interval: 1_000_000
@@ -55,7 +55,7 @@ optim:
   critic_coef: 0.25
   weight_decay: 0.0
   #mini_batch_size: 2000
-  mini_batch_size: 64
+  mini_batch_size: 512
 #  max_grad_norm: 10.0
   anneal_lr: false
   anneal_clip_epsilon: false

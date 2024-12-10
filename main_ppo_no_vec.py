@@ -57,6 +57,7 @@ from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgauss_worldmodel_ppo_loss import ClipHGaussWorldModelPPOLoss
+from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -119,18 +120,24 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         "high": action_spec.space.high,
         "tanh_loc": False,
     }
-# Define policy architecture
+    
+    # Define policy architecture
+    policy_dim = 256
+
     policy_mlp = MLP(
         in_features=input_shape[-1],
-        activation_class=torch.nn.Tanh,
+        activation_class=torch.nn.Mish,
         out_features=num_outputs,  # predict only loc
-        num_cells=[512, 512],
+        num_cells=[policy_dim, policy_dim],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [policy_dim, policy_dim]],
     )
 
     # Initialize policy weights
     for layer in policy_mlp.modules():
         if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 1.0)
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
     # Add state-independent normal scale
@@ -157,11 +164,24 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     )
 
     # Define value architecture
+    value_dim = 256
+    vmin = cfg.network.vmin
+    vmax = cfg.network.vmax
+    nbins = cfg.network.nbins
+    dk = (vmax - vmin) / (nbins - 4)
+    ktot = dk * nbins
+    vmax_support = math.ceil(vmin + ktot)
+
+    value_support = torch.linspace(vmin, vmax_support, nbins)
+
     value_mlp = MLP(
         in_features=input_shape[-1],
-        activation_class=torch.nn.Tanh,
-        out_features=1,
-        num_cells=[512, 512],
+        activation_class=torch.nn.Mish,
+        out_features=nbins,
+        num_cells=[value_dim, value_dim],
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                        "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
     )
 
     # Initialize value weights
@@ -175,10 +195,25 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         value_mlp,
         in_keys=["observation_vector"],
     )
+    support_network = SupportOperator(value_support)
+    value_module_1 = TensorDictModule(
+        module=value_mlp,
+        in_keys=["observation_vector"],
+        out_keys=["state_value_logits"]
+    )
+    value_module_2 = TensorDictModule(
+        module=support_network,
+        in_keys=["state_value_logits"],
+        out_keys=["state_value"]
+    )
 
+    value_module = TensorDictSequential(
+        value_module_1, 
+        value_module_2
+    )
     policy_module = policy_module.to(device)
     value_module = value_module.to(device)
-    return policy_module, value_module
+    return policy_module, value_module, value_support
 
 
 def make_raw_environment():
@@ -192,12 +227,20 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            Difference(in_keys=["target_alt", "alt", "target_speed", "mach", "target_heading", "psi"], out_keys=["altitude_error", "speed_error", "heading_error"]),
-            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt", "mach", "psi", "theta", "phi", 
-                                "u", "v", "w", "udot", "vdot", "wdot", "p", "q", "r", "pdot", "qdot", "rdot"],
-            out_key="observation_vector", del_keys=False),        
-            VecNorm(in_keys=["observation_vector"], decay=0.99999, eps=1e-2),
-            ClipTransform(in_keys=["observation_vector"], low=-10, high=10),
+            AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"],
+                                            add_cosine=False),
+            AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
+                                out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"],
+                                            add_cosine=False, base_scale=0.1),
+            Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], 
+                       out_keys=["altitude_error", "speed_error"]),
+            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),
+            PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
+            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
+            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
+                                "u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code",
+                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
+                        out_key="observation_vector", del_keys=False),
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -269,8 +312,8 @@ def main(cfg: DictConfig):
     template_env = make_environment(cfg)
     #test_td = template_env.reset()
 
-    actor_module, value_module = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-    loss_module = ClipPPOLoss(
+    actor_module, value_module, value_support = make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
+    loss_module = ClipHGaussPPOLoss(
         actor_module,
         value_module,
         clip_epsilon=cfg.ppo.clip_epsilon,
@@ -278,6 +321,7 @@ def main(cfg: DictConfig):
         entropy_coef=cfg.ppo.entropy_coef,
         critic_coef=cfg.optim.critic_coef,
         normalize_advantage= True,
+        support=value_support
     )
 
     adv_module = GAE(

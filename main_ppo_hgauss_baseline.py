@@ -164,7 +164,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     )
 
     # Define value architecture
-    value_dim = 256
+    value_dim = 1024
     vmin = cfg.network.vmin
     vmax = cfg.network.vmax
     nbins = cfg.network.nbins
