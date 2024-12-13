@@ -12,7 +12,6 @@ from torchrl.data.tensor_specs import (
     Bounded,
     Composite,
     Categorical,
-
     Unbounded,
 )
 from tensordict import TensorDict, TensorDictBase
@@ -41,36 +40,36 @@ class CLibControlEnv(EnvBase):
         self.aircraft_simulator = AircraftCLibSimulator(config)
 
         self.observation_spec = Composite(
-            u = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            w = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            x = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            y = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            z = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_aex = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_aey = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_aez = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_ex = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_ey = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            v_ez = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
+            a_ex = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            a_ey = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            a_ez = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            my = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            gamma = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            chi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            alpha = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            beta = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             mach = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            udot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            vdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            wdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            phi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            theta = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
             psi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            theta = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            phi = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             p = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             q = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             r = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             pdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             qdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             rdot = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            lat = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            lon = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            alt = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v_north = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v_east = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            v_down = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            air_density = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            speed_of_sound = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            crosswind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            headwind = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            true_airspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
-            groundspeed = Unbounded(shape=(1,), device=device, dtype=torch.float32),
+            fuel = Unbounded(shape=(1,), device=device, dtype=torch.float32),
             # I add these
-            last_action = Unbounded(shape=(4,), device=device, dtype=torch.float32),
+            last_action = Unbounded(shape=(3,), device=device, dtype=torch.float32),
             # Goals
             target_alt = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
             target_speed = Unbounded(shape=(1,), device=device, dtype=torch.float32), 
@@ -104,12 +103,12 @@ class CLibControlEnv(EnvBase):
         self._tolerance_speed = None
         self._tolerance_heading = None
         self.curriculum_manager = CurriculumManagerCLib(
-            min_lat_geod_deg = 57.0,
-            max_lat_geod_deg = 60.0,
-            min_long_gc_deg = 15.0,
-            max_long_gc_deg = 20.0,
-            min_altitude = 1000.0,
-            max_altitude = 10000.0,
+            min_X = -10000,
+            max_X = 10000,
+            min_Y = -10000,
+            max_Y = 10000,
+            min_Z = 1000.0,
+            max_Z = 10000.0,
             min_speed = 100.0,
             max_speed = 365.0,
             min_heading = 0.0,
@@ -140,23 +139,23 @@ class CLibControlEnv(EnvBase):
         total_reward = 0.0
         smoothness_reward = 0.0
         task_reward = 0.0
-        if simulator_state.position_h_sl_m < 300:
+        if simulator_state.z < 300:
             task_reward = -100.0
             total_reward = task_reward
         else:
             alt_error_scale = 350.0  # m'
-            alt_error = simulator_state.position_h_sl_m - self._target_altitude
+            alt_error = simulator_state.z - self._target_altitude
             if self._tolerance_altitude is not None:
                 alt_error = max(0, abs(alt_error) - self._tolerance_altitude)
             alt_reward = math.exp(-((alt_error / alt_error_scale) ** 2))
             speed_error_scale = 0.5
-            speed_error = simulator_state.velocity_mach - self._target_speed
+            speed_error = simulator_state.mach - self._target_speed
             if self._tolerance_speed is not None:
                 speed_error = max(0, abs(speed_error) - self._tolerance_speed)
 
             speed_reward = math.exp(-((speed_error / speed_error_scale)**2))
             heading_error_scale = math.pi/2
-            heading_error = self.heading_error(simulator_state.attitude_psi_rad, self._target_heading)
+            heading_error = self.heading_error(simulator_state.psi, self._target_heading)
             if self._tolerance_heading is not None:
                 heading_error = max(0, abs(heading_error) - self._tolerance_heading)
 
@@ -164,11 +163,11 @@ class CLibControlEnv(EnvBase):
             task_reward = math.pow(alt_reward * speed_reward * heading_reward, 1/3)
             if math.isclose(task_reward, 1.0):
                 smoothness_p_scale = 0.25
-                smoothness_p_reward = math.exp(-((simulator_state.velocity_p_rad_sec / smoothness_p_scale)**2))
+                smoothness_p_reward = math.exp(-((simulator_state.p / smoothness_p_scale)**2))
                 smoothness_q_scale = 0.25
-                smoothness_q_reward = math.exp(-((simulator_state.velocity_q_rad_sec / smoothness_q_scale)**2))
+                smoothness_q_reward = math.exp(-((simulator_state.q / smoothness_q_scale)**2))
                 smoothness_r_scale = 0.25
-                smoothness_r_reward = math.exp(-((simulator_state.velocity_r_rad_sec / smoothness_r_scale)**2))
+                smoothness_r_reward = math.exp(-((simulator_state.r / smoothness_r_scale)**2))
                 smoothness_reward = math.pow(smoothness_p_reward * smoothness_q_reward * smoothness_r_reward, 1/3)
             total_reward = task_reward + smoothness_reward
 
@@ -177,7 +176,7 @@ class CLibControlEnv(EnvBase):
         td_out.set("reward", torch.tensor(total_reward, device=self.device))
         
     def _evaluate_terminated(self, simulator_state: SimulatorState) -> bool:
-        if simulator_state.position_h_sl_m < 300:
+        if simulator_state.z < 300:
             return True
         else:
             return False
@@ -208,34 +207,34 @@ class CLibControlEnv(EnvBase):
 
 
     def _add_observations(self, simulator_state: SimulatorState, tensordict: TensorDict):
-        tensordict["u"] =  torch.tensor([simulator_state.velocity_u_m_sec], device=self.device)
-        tensordict["v"] =  torch.tensor([simulator_state.velocity_v_m_sec], device=self.device)
-        tensordict["w"] =  torch.tensor([simulator_state.velocity_w_m_sec], device=self.device)
-        tensordict["mach"] = torch.tensor([simulator_state.velocity_mach], device=self.device)
-        tensordict["v_north"] =  torch.tensor([simulator_state.velocity_north_m_sec], device=self.device)
-        tensordict["v_east"] =  torch.tensor([simulator_state.velocity_east_m_sec], device=self.device)                
-        tensordict["v_down"] =  torch.tensor([simulator_state.velocity_down_m_sec], device=self.device)
-        tensordict["udot"] =  torch.tensor([simulator_state.acceleration_udot_m_sec2], device=self.device)
-        tensordict["vdot"] =  torch.tensor([simulator_state.acceleration_vdot_m_sec2], device=self.device)
-        tensordict["wdot"] =  torch.tensor([simulator_state.acceleration_wdot_m_sec2], device=self.device)
-        tensordict["phi"] =  torch.tensor([simulator_state.attitude_phi_rad], device=self.device)
-        tensordict["theta"] =  torch.tensor([simulator_state.attitude_theta_rad], device=self.device)
-        tensordict["psi"] =  torch.tensor([simulator_state.attitude_psi_rad], device=self.device)
-        tensordict["p"] =  torch.tensor([simulator_state.velocity_p_rad_sec], device=self.device)
-        tensordict["q"] =  torch.tensor([simulator_state.velocity_q_rad_sec], device=self.device)
-        tensordict["r"] =  torch.tensor([simulator_state.velocity_r_rad_sec], device=self.device)
-        tensordict["pdot"] =  torch.tensor([simulator_state.acceleration_pdot_rad_sec2], device=self.device)
-        tensordict["qdot"] =  torch.tensor([simulator_state.acceleration_qdot_rad_sec2], device=self.device)
-        tensordict["rdot"] =  torch.tensor([simulator_state.acceleration_rdot_rad_sec2], device=self.device)
-        tensordict["lat"] =  torch.tensor([simulator_state.position_lat_geod_rad], device=self.device)
-        tensordict["lon"] =  torch.tensor([simulator_state.position_long_gc_rad], device=self.device)
-        tensordict["alt"] =  torch.tensor([simulator_state.position_h_sl_m], device=self.device)
-        tensordict["air_density"] =  torch.tensor([simulator_state.rho_kg_m3], device=self.device)
-        tensordict["speed_of_sound"] =  torch.tensor([simulator_state.a_m_sec], device=self.device)
-        tensordict["crosswind"] =  torch.tensor([simulator_state.crosswind_m_sec], device=self.device)
-        tensordict["headwind"] =  torch.tensor([simulator_state.headwind_m_sec], device=self.device)
-        tensordict["true_airspeed"] =  torch.tensor([simulator_state.vc_m_sec], device=self.device)
-        tensordict["groundspeed"] =  torch.tensor([simulator_state.vg_m_sec], device=self.device)
+        tensordict["x"] =  torch.tensor([simulator_state.x], device=self.device)
+        tensordict["y"] =  torch.tensor([simulator_state.y], device=self.device)
+        tensordict["z"] =  torch.tensor([simulator_state.z], device=self.device)
+        tensordict["v_aex"] = torch.tensor([simulator_state.v_aex], device=self.device)
+        tensordict["v_aey"] =  torch.tensor([simulator_state.v_aey], device=self.device)
+        tensordict["v_aez"] =  torch.tensor([simulator_state.v_aez], device=self.device)                
+        tensordict["v_ex"] =  torch.tensor([simulator_state.v_ex], device=self.device)
+        tensordict["v_ey"] =  torch.tensor([simulator_state.v_ey], device=self.device)
+        tensordict["v_ez"] =  torch.tensor([simulator_state.v_ez], device=self.device)
+        tensordict["a_ex"] =  torch.tensor([simulator_state.a_ex], device=self.device)
+        tensordict["a_ey"] =  torch.tensor([simulator_state.a_ey], device=self.device)
+        tensordict["a_ez"] =  torch.tensor([simulator_state.a_ez], device=self.device)
+        tensordict["my"] =  torch.tensor([simulator_state.my], device=self.device)
+        tensordict["gamma"] =  torch.tensor([simulator_state.gamma], device=self.device)
+        tensordict["chi"] =  torch.tensor([simulator_state.chi], device=self.device)
+        tensordict["alpha"] =  torch.tensor([simulator_state.alpha], device=self.device)
+        tensordict["beta"] =  torch.tensor([simulator_state.beta], device=self.device)
+        tensordict["mach"] =  torch.tensor([simulator_state.mach], device=self.device)
+        tensordict["psi"] =  torch.tensor([simulator_state.psi], device=self.device)
+        tensordict["theta"] =  torch.tensor([simulator_state.theta], device=self.device)
+        tensordict["phi"] =  torch.tensor([simulator_state.phi], device=self.device)
+        tensordict["p"] =  torch.tensor([simulator_state.p], device=self.device)
+        tensordict["q"] =  torch.tensor([simulator_state.q], device=self.device)
+        tensordict["r"] =  torch.tensor([simulator_state.r], device=self.device)
+        tensordict["pdot"] =  torch.tensor([simulator_state.pdot], device=self.device)
+        tensordict["qdot"] =  torch.tensor([simulator_state.qdot], device=self.device)
+        tensordict["rdot"] =  torch.tensor([simulator_state.rdot], device=self.device)
+        tensordict["fuel"] =  torch.tensor([simulator_state.fuel], device=self.device)
         tensordict["target_alt"] =  torch.tensor([self._target_altitude], device=self.device)
         tensordict["target_speed"] =  torch.tensor([self._target_speed], device=self.device)
         tensordict["target_heading"] =  torch.tensor([self._target_heading], device=self.device)
@@ -255,11 +254,11 @@ class CLibControlEnv(EnvBase):
             aircraft_ic = self.curriculum_manager.get_initial_conditions()
         primer_action = torch.zeros((self.action_spec.shape[-1],), device=self.device)
         simulator_state = self.aircraft_simulator.reset(aircraft_ic)
-        self._target_altitude = simulator_state.position_h_sl_m #will be ignored.
+        self._target_altitude = simulator_state.z #will be ignored.
         self._tolerance_altitude = 40
-        self._target_speed = simulator_state.velocity_mach #speed up a little
+        self._target_speed = simulator_state.mach #speed up a little
         self._tolerance_speed = 0.05
-        self._target_heading = simulator_state.attitude_psi_rad
+        self._target_heading = simulator_state.psi
         self._tolerance_heading = 3 * torch.pi / 180 #three degrees
         self._add_observations(simulator_state, td_out)
         self._add_last_action(primer_action, td_out)

@@ -1,3 +1,6 @@
 from .aircraft_simulator import (
-     AircraftSimulatorConfig, SimulatorState
+     AircraftSimulatorConfig, 
+     SimulatorState,
+     AircraftCLibSimulator, 
+     AircraftCLibInitialConditions
 )

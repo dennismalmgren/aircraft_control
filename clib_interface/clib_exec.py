@@ -1,7 +1,6 @@
 import ctypes
 from dataclasses import dataclass
-
-from .aircraft_simulator import AircraftCLibInitialConditions
+import os
 
 class sim_state(ctypes.Structure):
     _fields_ = [
@@ -14,6 +13,9 @@ class sim_state(ctypes.Structure):
         ('V_EX', ctypes.c_float),
         ('V_EY', ctypes.c_float),
         ('V_EZ', ctypes.c_float),
+        ('A_EX', ctypes.c_float),
+        ('A_EY', ctypes.c_float),
+        ('A_EZ', ctypes.c_float),
         ('MY', ctypes.c_float),
         ('GAMMA', ctypes.c_float),
         ('CHI', ctypes.c_float),  
@@ -38,9 +40,19 @@ class sim_inputs:
     pitch: float
     throttle: float
 
+@dataclass
+class sim_initialconditions:
+    x_rt90: float 
+    y_rt90: float
+    z_rt90: float 
+    psi_deg: float 
+    u_mps: float
+
 class CLibExec:
     def __init__(self):
-        self.my_sim = ctypes.CDLL("./libsiminterface.so")
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        lib_path = os.path.join(current_dir, "libmysimintegration.so")
+        self.my_sim = ctypes.CDLL(lib_path)
         #set up methods
         #init: x, y, z, speed, heading
         self.my_sim.init_sim.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
@@ -55,10 +67,12 @@ class CLibExec:
 
         self.my_sim.step.argtypes = None
         self.my_sim.step.restype = None
+        
 
-    def set_initial_conditions(self, initial_conditions: AircraftCLibInitialConditions):
+    def set_initial_conditions(self, initial_conditions: sim_initialconditions):
         # TODO: Check types (feet, deg etc)
-        self.my_sim.init_sim(initial_conditions.x_rt90, initial_conditions.y_rt90, initial_conditions.z_rt90, initial_conditions.v_aex_mps, initial_conditions.psi_deg)
+        #the training lib will have to do more.
+        self.my_sim.init_sim(initial_conditions.x_rt90, initial_conditions.y_rt90, initial_conditions.z_rt90, initial_conditions.u_mps, initial_conditions.psi_deg)
         
 
     def get_simulator_state(self) -> sim_state:
@@ -74,6 +88,7 @@ class CLibExec:
         self.my_sim.step()
 
     def close(self):
+        del self.my_sim
         self.my_sim = None
 
 

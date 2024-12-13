@@ -1,2 +1,2 @@
 from .jsbsim_control_env import JSBSimControlEnv, JSBSimControlEnvConfig
-#from .clib_control_env import CLibControlEnv, CLibControlEnvConfig
+from .clib_control_env import CLibControlEnv, CLibControlEnvConfig

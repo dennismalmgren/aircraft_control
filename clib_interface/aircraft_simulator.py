@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 import numpy as np
 from enum import Enum
-from .clib_exec import CLibExec
+from clib_interface.clib_exec import CLibExec, sim_state, sim_inputs, sim_initialconditions
 
 @dataclass
 class AircraftSimulatorConfig:
@@ -56,7 +56,6 @@ class AircraftCLibInitialConditions:
     z_rt90: float = 6000      # altitude above mean sea level [ft]
     psi_deg: float = 0.0   # initial (true) heading [deg] (0, 360)
     u_mps: float = 800.0        # body frame x-axis velocity [ft/s]  (-2200, 2200)
-   
 
 class AircraftCLibSimulator:
     
@@ -68,18 +67,8 @@ class AircraftCLibSimulator:
     def reset(self, ic: AircraftCLibInitialConditions):
         self.clib_exec = CLibExec()
 
-        self._set_initial_conditions(ic)
+        self._set_initial_conditions(ic) #just assume it works, for now.
 
-        success = self.jsbsim_exec.run_ic()
-        if not success:
-            raise ValueError("Failed to run initial conditions in JSBSim.")
-        
-        # propulsion init running
-        propulsion = self.jsbsim_exec.get_propulsion()
-        n = propulsion.get_num_engines()
-        for j in range(n):
-            propulsion.get_engine(j).init_running()
-        propulsion.get_steady_state()
         state = self._get_state()
         return state
     
@@ -90,61 +79,65 @@ class AircraftCLibSimulator:
         roll = control_action[0]
         pitch = control_action[1]
         throttle = control_action[2]
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_throttle_cmd_norm.name, throttle)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_aileron_cmd_norm.name, aileron)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_elevator_cmd_norm.name, elevator)
-        self.jsbsim_exec.set_property_value(self.jsbsim_catalog.fcs_rudder_cmd_norm.name, rudder)
-        
-        result = self.jsbsim_exec.run()
-        if not result:
-            raise RuntimeError("JSBSim failed.")
-        #todo: update properties (and return them)
+        inputs = sim_inputs(
+            roll = roll,
+            pitch = pitch,
+            throttle = throttle
+        )
+        self.clib_exec.set_controls(inputs)
+        self.clib_exec.step()
         aircraft_state = self._get_state()
         return aircraft_state
     
     slugs_ft3_to_kg_m3 = 14.59390  / (0.3048**3)
     ft_to_m = 0.3048
 
-    def _get_property(self, property, unit_conversion=1.0):
-        return self.jsbsim_exec.get_property_value(property.name) * unit_conversion
-    
     def _get_state(self):
+        state: sim_state = self.clib_exec.get_simulator_state()
+
         simstate = SimulatorState(
-            velocity_u_m_sec = self._get_property(self.jsbsim_catalog.velocities_u_fps, self.ft_to_m),
-            velocity_v_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_fps, self.ft_to_m),
-            velocity_w_m_sec = self._get_property(self.jsbsim_catalog.velocities_w_fps, self.ft_to_m),
-            velocity_north_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_north_fps, self.ft_to_m),
-            velocity_east_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_east_fps, self.ft_to_m),
-            velocity_down_m_sec = self._get_property(self.jsbsim_catalog.velocities_v_down_fps, self.ft_to_m),            
-            acceleration_udot_m_sec2 =  self._get_property(self.jsbsim_catalog.accelerations_udot_ft_sec2, self.ft_to_m),
-            acceleration_vdot_m_sec2 = self._get_property(self.jsbsim_catalog.accelerations_vdot_ft_sec2, self.ft_to_m),
-            acceleration_wdot_m_sec2 =  self._get_property(self.jsbsim_catalog.accelerations_wdot_ft_sec2, self.ft_to_m),
-            attitude_psi_rad = self._get_property(self.jsbsim_catalog.attitude_psi_rad),
-            attitude_theta_rad = self._get_property(self.jsbsim_catalog.attitude_theta_rad),
-            attitude_phi_rad = self._get_property(self.jsbsim_catalog.attitude_phi_rad),
-            velocity_p_rad_sec = self._get_property(self.jsbsim_catalog.velocities_p_rad_sec),
-            velocity_q_rad_sec = self._get_property(self.jsbsim_catalog.velocities_q_rad_sec),
-            velocity_r_rad_sec = self._get_property(self.jsbsim_catalog.velocities_r_rad_sec),
-            acceleration_pdot_rad_sec2 = self._get_property(self.jsbsim_catalog.accelerations_pdot_rad_sec2),
-            acceleration_qdot_rad_sec2 = self._get_property(self.jsbsim_catalog.accelerations_qdot_rad_sec2),
-            acceleration_rdot_rad_sec2 = self._get_property(self.jsbsim_catalog.accelerations_rdot_rad_sec2),
-            position_lat_geod_rad = self._get_property(self.jsbsim_catalog.position_lat_geod_rad),
-            position_long_gc_rad = self._get_property(self.jsbsim_catalog.position_long_gc_rad),
-            position_h_sl_m = self._get_property(self.jsbsim_catalog.position_h_sl_ft, self.ft_to_m),
-            rho_kg_m3 = self._get_property(self.jsbsim_catalog.atmosphere_rho_slugs_ft3, self.slugs_ft3_to_kg_m3),
-            a_m_sec = self._get_property(self.jsbsim_catalog.atmosphere_a_fps, self.ft_to_m),
-            crosswind_m_sec = self._get_property(self.jsbsim_catalog.atmosphere_crosswind_fps, self.ft_to_m),
-            headwind_m_sec = self._get_property(self.jsbsim_catalog.atmosphere_headwind_fps, self.ft_to_m),
-            vc_m_sec = self._get_property(self.jsbsim_catalog.velocities_vc_fps, self.ft_to_m),
-            vg_m_sec = self._get_property(self.jsbsim_catalog.velocities_vg_fps, self.ft_to_m),
-            velocity_mach = self._get_property(self.jsbsim_catalog.velocities_mach)
+            x = state.X,
+            y = state.Y,
+            z = state.Z,
+            v_aex = state.V_AEX,
+            v_aey = state.V_AEY,
+            v_aez = state.V_AEX,
+            v_ex = state.V_AEY,
+            v_ey = state.V_AEX,
+            v_ez = state.V_AEY,
+            a_ex = state.V_AEX,
+            a_ey = state.V_AEY,
+            a_ez = state.V_AEX,
+            my = state.V_AEY,
+            gamma = state.V_AEX,
+            chi = state.V_AEY,
+            alpha = state.V_AEX,
+            beta = state.V_AEY,
+            mach = state.V_AEX,
+            psi = state.PSI,
+            theta = state.THETA,
+            phi = state.PHI,
+            p = state.V_AEY,
+            q = state.V_AEX,
+            r = state.V_AEY,
+            pdot = state.V_AEX,
+            qdot = state.V_AEY,
+            rdot = state.V_AEX,
+            fuel = state.V_AEY,
         )
         return simstate
 
     def _set_initial_conditions(self, ic: AircraftCLibInitialConditions):
-        self.clib_exec.set_initial_conditions(ic)
+        sim_init = sim_initialconditions(
+            x_rt90=ic.x_rt90,
+            y_rt90=ic.y_rt90,
+            z_rt90=ic.z_rt90,
+            psi_deg=ic.psi_deg,
+            u_mps=ic.u_mps
+        )
+        self.clib_exec.set_initial_conditions(sim_init)
 
     def close(self):
         """ Closes the simulation and any plots. """
-        if self.jsbsim_exec:
-            self.jsbsim_exec = None
+        if self.clib_exec:
+            self.clib_exec = None
