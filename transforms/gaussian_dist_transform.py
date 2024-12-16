@@ -61,14 +61,15 @@ class GaussianDistance(Transform):
                 value1 = tensordict[in_key1]
                 value2 = tensordict[in_key2]
                 difference = value1 - value2
-                tensor_out = self.encode_gaussian_distance(difference, scales)
+                #tensor_out = self.encode_gaussian_distance(difference, scales)
+                tensor_out = self.encode_sigmoid_distance(difference, scales)
             else:
                 in_key = self.in_keys[i]
                 out_key = self.out_keys[i]
                 value1 = tensordict[in_key]
                 constant_tensor = torch.tensor(self.constant, dtype=torch.float32, device=value1.device)
                 difference = value1 - constant_tensor
-                tensor_out = self.encode_gaussian_distance(difference, scales)
+                tensor_out = self.encode_sigmoid_distance(difference, scales)
             tensordict[out_key] = tensor_out
         return tensordict
 
@@ -76,9 +77,14 @@ class GaussianDistance(Transform):
 
     def encode_gaussian_distance(self, difference: torch.Tensor, scales: List):
         scales_tensor = torch.tensor(scales, dtype=torch.float32, device=difference.device)
-        activations = torch.exp(-((difference / scales_tensor)**2))
+        activations = torch.exp(-((difference / scales_tensor)**2)) - 0.5
         return activations
 
+    def encode_sigmoid_distance(self, difference: torch.Tensor, scales: List):
+        scales_tensor = torch.tensor(scales, dtype=torch.float32, device=difference.device)
+        activations = torch.sigmoid(difference / scales_tensor)
+        return activations
+    
     def _reset(
         self, tensordict: TensorDictBase, tensordict_reset: TensorDictBase
     ) -> TensorDictBase:
