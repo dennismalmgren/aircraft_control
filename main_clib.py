@@ -43,8 +43,8 @@ from torchrl.data import LazyMemmapStorage, TensorDictReplayBuffer
 from torchrl.objectives.value.advantages import GAE
 from tensordict import TensorDict
 
-from jsbsim_interface import AircraftSimulatorConfig, AircraftJSBSimSimulator, AircraftJSBSimInitialConditions
-from control_env import JSBSimControlEnv, JSBSimControlEnvConfig
+from clib_interface import AircraftSimulatorConfig, AircraftCLibSimulator, AircraftCLibInitialConditions
+from control_env import CLibControlEnv, CLibControlEnvConfig
 from transforms.euler_to_rotation_transform import EulerToRotation
 from transforms.altitude_to_scale_code_transform import AltitudeToScaleCode
 from transforms.altitude_to_digits_transform import AltitudeToDigits
@@ -55,7 +55,7 @@ from transforms.angular_difference_transform import AngularDifference
 from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
 
 from hgauss.support_operator import SupportOperator
-from hgauss.objectives.cliphgauss_worldmodel_decode_ppo_loss import ClipHGaussWorldModelDecodePPOLoss
+from hgauss.objectives.cliphgauss_worldmodel_ppo_loss import ClipHGaussWorldModelPPOLoss
 
 def log_trajectory(states, aircraft_uid):
     with open("thelog.acmi", mode='w', encoding='utf-8-sig') as f:
@@ -140,19 +140,6 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
                     "normalized_shape": hidden_size} for hidden_size in [enc_dim, latent_dim, latent_dim]],
-        
-    )
-    
-    decoder_net = MLP(
-        in_features=enc_dim, #+ num_fourier_features * 5 - 5,
-        activation_class=torch.nn.Mish,
-        #activation_kwargs=softmax_activation_kwargs,
-        out_features=input_shape[-1],  # predict only loc
-        num_cells=[latent_dim, latent_dim],
-        activate_last_layer=False,
-        norm_class=torch.nn.LayerNorm,
-        norm_kwargs=[{"elementwise_affine": False,
-                    "normalized_shape": hidden_size} for hidden_size in [latent_dim, latent_dim]],    
     )
 
     dynamics_net = MLP(
@@ -195,11 +182,6 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
-    for layer in decoder_net.modules():
-        if isinstance(layer, torch.nn.Linear):
-            torch.nn.init.orthogonal_(layer.weight, 0.7)
-            layer.bias.data.zero_()
-            
     for layer in dynamics_net.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 0.7)
@@ -221,12 +203,6 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         AddStateIndependentNormalScale(
             action_spec.shape[-1], scale_lb=1e-8
         ),
-    )
-
-    decoder_module = TensorDictModule(
-        module=decoder_net,
-        in_keys=["observation_encoded"],
-        out_keys=["observation_vector_decoded"]
     )
 
     encoder_module = TensorDictModule(
@@ -313,18 +289,17 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     value_module = value_module.to(device)
     support = support.to(device)
     encoder_module = encoder_module.to(device)
-    decoder_module = decoder_module.to(device)
     dynamics_module = dynamics_module.to(device)
     reward_module = reward_module.to(device)
     policy_module = policy_module.to(device)
     latent_actor_module = latent_actor_module.to(device)
 
-    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module, decoder_module
+    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module
 
 
 
 def make_raw_environment():
-    env = JSBSimControlEnv()
+    env = CLibControlEnv()
     return env
 
 def apply_env_transforms(env, cfg, is_train = True):
@@ -335,24 +310,16 @@ def apply_env_transforms(env, cfg, is_train = True):
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
             PlanarAngleCosSin(in_keys=["psi", "theta", "phi"], out_keys=["psi_cossin", "theta_cossin", "phi_cossin"]),
-            Difference(in_keys=["target_alt", "alt", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
+            Difference(in_keys=["target_alt", "z", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
             AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"], add_cosine=False, base_scale=100.0,num_wavelengths=4 ),
+            AltitudeToScaleCode(in_keys=["z"], out_keys=["alt_code"], add_cosine=False, base_scale=100.0,num_wavelengths=4 ),
             CatTensors(in_keys=["altitude_error", "speed_error", "alt_code", "mach", 
-                                "u", "v", "w", "udot", "vdot", "wdot",
+                                "v_aex", "v_aey", "v_aez", "a_ex", "a_ey", "a_ez",
                     "p", "q", "r", "pdot", "qdot", "rdot"],
             out_key="norm_vector", del_keys=False),
             VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
             ClipTransform(in_keys=["norm_vector"], low=-10, high=10),
-            CatTensors(in_keys=["norm_vector", "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
-#            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            # AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4 ),
-            # AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
-            #                     out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code", "altitude_error_code"], 
-            #                                 add_cosine=False, base_scale=10.0,num_wavelengths=4),
-            # AltitudeToScaleCode(in_keys=["speed_error", "mach"], out_keys=["speed_error_code", "mach_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4),
-
-        
+            CatTensors(in_keys=["norm_vector", "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),        
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -418,28 +385,23 @@ def main(cfg: DictConfig):
             logger_name="ac_logging",
             experiment_name=exp_name,
             wandb_kwargs={"mode": cfg.logger.mode,
-                          "project": cfg.logger.project,
-                       #   "resume": "must",
-                      #    "id": "k9a2ij6t"
-                          },
+                          "project": cfg.logger.project,},
         )
 
     template_env = make_environment(cfg)
 
-    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module, decoder_module = \
+    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module= \
         make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
-    
-    loss_module = ClipHGaussWorldModelDecodePPOLoss(
+    loss_module = ClipHGaussWorldModelPPOLoss(
         actor_network=learning_actor_module,
         critic_network=value_module,
         encoder_network=encoder_module,
-        decoder_network=decoder_module,
         dynamics_network=dynamics_module,
         reward_network=reward_module,
         clip_epsilon=cfg.ppo.clip_epsilon,
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
-        normalize_advantage = True,
+        normalize_advantage= True,
         support=support
     )
 
@@ -452,10 +414,8 @@ def main(cfg: DictConfig):
     actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
     consistency_optim = torch.optim.AdamW(list(encoder_module.parameters()) + 
-                                          list(dynamics_module.parameters()) + list(decoder_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
-    
-    reward_optim = torch.optim.AdamW(list(reward_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
-
+                                          list(dynamics_module.parameters()) +
+                                          list(reward_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
 
     collected_frames = 0
     cfg_logger_save_interval = cfg.logger.save_interval
@@ -464,8 +424,8 @@ def main(cfg: DictConfig):
 
     load_model = False
     if load_model:
-        model_dir="2024-12-15/23-07-13/"
-        model_name = "training_snapshot_1040000"
+        model_dir="2024-12-07/10-39-45/"
+        model_name = "training_snapshot_8040000"
         loaded_state = load_model_state(model_name, model_dir)
 
         actor_state = loaded_state['model_actor']
@@ -473,10 +433,8 @@ def main(cfg: DictConfig):
         dynamics_state = loaded_state['model_dynamics']
         encoder_state = loaded_state['model_encoder']
         reward_state = loaded_state['model_reward']
-        decoder_state = loaded_state['model_decoder']
         actor_optim_state = loaded_state['actor_optimizer']
         critic_optim_state = loaded_state['critic_optimizer']
-        reward_optim_state = loaded_state['reward_optimizer']
         consistency_optim_state = loaded_state['consistency_optimizer']
         collected_frames = loaded_state['collected_frames']['collected_frames']
         loaded_frames = collected_frames
@@ -484,12 +442,10 @@ def main(cfg: DictConfig):
         value_module.load_state_dict(critic_state)
         dynamics_module.load_state_dict(dynamics_state)
         encoder_module.load_state_dict(encoder_state)
-        decoder_module.load_state_dict(decoder_state)
         reward_module.load_state_dict(reward_state)
         actor_optim.load_state_dict(actor_optim_state)
         critic_optim.load_state_dict(critic_optim_state)
         consistency_optim.load_state_dict(consistency_optim_state)
-        reward_optim.load_state_dict(reward_optim_state)
 
 
     frames_remaining = cfg.collector.total_frames - collected_frames
@@ -545,7 +501,7 @@ def main(cfg: DictConfig):
             for reward_key in reward_keys:
                 log_info.update(
                     {
-                        f"train_reward/{reward_key}": data["next", "episode_" + reward_key][
+                        f"train/{reward_key}": data["next", "episode_" + reward_key][
                             data["next", "done"]
                         ].mean().item()
                     }
@@ -577,30 +533,21 @@ def main(cfg: DictConfig):
                 losses[j, k] = loss.select(
                     "loss_critic", "loss_entropy", "loss_objective", "loss_consistency", "loss_reward"
                 ).detach()
-                clip_fraction = loss["clip_fraction"]
-
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
                 consistency_loss = loss["loss_consistency"] * 20
                 reward_loss = loss["loss_reward"]
+                consistency_critic_loss = consistency_loss + critic_loss + reward_loss
 
                 consistency_optim.zero_grad()
-                reward_optim.zero_grad()     
-
-                consistency_loss.backward()
+                critic_optim.zero_grad()                
+                consistency_critic_loss.backward()
                 consistency_grad_norm = torch.nn.utils.clip_grad_norm_(list(encoder_module.parameters())
-                                                                        + list(dynamics_module.parameters()), cfg_max_grad_norm * 2)
-                consistency_optim.step()
-
-                critic_optim.zero_grad()           
-                critic_loss.backward()
+                                                                        + list(dynamics_module.parameters()) + 
+                                                                        list(reward_module.parameters()), cfg_max_grad_norm * 2)
                 critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
                 critic_optim.step()
-
-                reward_optim.zero_grad()     
-                reward_loss.backward()
-                reward_grad_norm = torch.nn.utils.clip_grad_norm_(list(reward_module.parameters()), cfg_max_grad_norm * 2)
-                reward_optim.step()
+                consistency_optim.step()
 
                 actor_optim.zero_grad()
                 actor_loss.backward()
@@ -611,9 +558,7 @@ def main(cfg: DictConfig):
                 norms[j, k] = TensorDict({
                     "actor_grad_norm": actor_grad_norm,
                     "critic_grad_norm": critic_grad_norm,
-                    "consistency_grad_norm": consistency_grad_norm,
-                    "reward_grad_norm": reward_grad_norm,
-                    "clip_fraction": clip_fraction
+                    "consistency_grad_norm": consistency_grad_norm
                 })
 
          # Get training losses and times
@@ -659,12 +604,11 @@ def main(cfg: DictConfig):
                         'model_critic': value_module.state_dict(),
                         'model_dynamics': dynamics_module.state_dict(),
                         'model_encoder': encoder_module.state_dict(),
-                        'model_decoder': decoder_module.state_dict(),
                         'model_reward': reward_module.state_dict(),
                         'actor_optimizer': actor_optim.state_dict(),
                         'critic_optimizer': critic_optim.state_dict(),
                         'consistency_optimizer': consistency_optim.state_dict(),
-                        'reward_optimizer': reward_optim.state_dict(),
+
                         "collected_frames": {"collected_frames": collected_frames},
                 }
                 torch.save(savestate, f"training_snapshot_{collected_frames}.pt")
