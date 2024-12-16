@@ -53,6 +53,7 @@ from transforms.episode_sum_transform import EpisodeSum
 from transforms.difference_transform import Difference
 from transforms.angular_difference_transform import AngularDifference
 from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
+from transforms.gaussian_dist_transform import GaussianDistance
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgauss_worldmodel_decode_ppo_loss import ClipHGaussWorldModelDecodePPOLoss
@@ -335,23 +336,26 @@ def apply_env_transforms(env, cfg, is_train = True):
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
             PlanarAngleCosSin(in_keys=["psi", "theta", "phi"], out_keys=["psi_cossin", "theta_cossin", "phi_cossin"]),
-            Difference(in_keys=["target_alt", "alt", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
-            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"], add_cosine=False, base_scale=100.0,num_wavelengths=4 ),
-            CatTensors(in_keys=["altitude_error", "speed_error", "alt_code", "mach", 
-                                "u", "v", "w", "udot", "vdot", "wdot",
+            GaussianDistance(in_keys=["target_alt", "alt","target_speed", "mach"],
+                             out_keys=["altitude_error", "speed_error"],
+                             scales = [[300, 100, 35, 15, 5],
+                                       [3, 1, 0.3, 0.1, 0.03, 0.01]]
+                             ),
+            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),     
+            GaussianDistance(in_keys=["alt"],
+                    out_keys=["alt_code"],
+                    scales = [[15000, 5000, 2000, 650, 200, 80, 30, 10, 3, 1]],
+                    constant = 0
+                    ),                   
+
+
+            CatTensors(in_keys=[ "mach", "u", "v", "w", "udot", "vdot", "wdot",
                     "p", "q", "r", "pdot", "qdot", "rdot"],
             out_key="norm_vector", del_keys=False),
             VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
             ClipTransform(in_keys=["norm_vector"], low=-10, high=10),
-            CatTensors(in_keys=["norm_vector", "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
-#            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            # AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4 ),
-            # AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
-            #                     out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code", "altitude_error_code"], 
-            #                                 add_cosine=False, base_scale=10.0,num_wavelengths=4),
-            # AltitudeToScaleCode(in_keys=["speed_error", "mach"], out_keys=["speed_error_code", "mach_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4),
-
+            CatTensors(in_keys=["norm_vector", "altitude_error", "speed_error", "alt_code",
+                                "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
         
             RewardSum(in_keys=reward_keys),
         )
@@ -579,7 +583,7 @@ def main(cfg: DictConfig):
 
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
-                consistency_loss = loss["loss_consistency"] * 20 + loss["loss_decoder"]
+                consistency_loss = loss["loss_consistency"] * 0 + loss["loss_decoder"]
                 reward_loss = loss["loss_reward"]
 
                 consistency_optim.zero_grad()
