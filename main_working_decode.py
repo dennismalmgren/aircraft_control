@@ -349,14 +349,17 @@ def apply_env_transforms(env, cfg, is_train = True):
                     ),                   
 
 
-            CatTensors(in_keys=[ "mach", "u", "v", "w", "udot", "vdot", "wdot",
-                    "p", "q", "r", "pdot", "qdot", "rdot"],
-            out_key="norm_vector", del_keys=False),
-            VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
-            ClipTransform(in_keys=["norm_vector"], low=-10, high=10),
-            CatTensors(in_keys=["norm_vector", "altitude_error", "speed_error", "alt_code",
-                                "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
-        
+            #CatTensors(in_keys=[ "mach", "u", "v", "w", "udot", "vdot", "wdot",
+            #        "p", "q", "r", "pdot", "qdot", "rdot"],
+            #out_key="norm_vector", del_keys=False),
+            #VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
+            RewardScaling(in_keys=["u", "v", "w"], loc=0.0, scale=0.01),
+            CatTensors(in_keys=["mach", "u", "v", "w", "udot", "vdot", "wdot",
+                    "p", "q", "r", "pdot", "qdot", "rdot", "altitude_error", "speed_error", "alt_code",
+                                "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector",
+                                del_keys=False),
+            ClipTransform(in_keys=["observation_vector"], low=-10, high=10),
+            
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -583,7 +586,7 @@ def main(cfg: DictConfig):
 
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
-                consistency_loss = loss["loss_consistency"] * 0 + loss["loss_decoder"]
+                consistency_loss = loss["loss_consistency"] * 20 + loss["loss_decoder"]
                 reward_loss = loss["loss_reward"]
 
                 consistency_optim.zero_grad()
