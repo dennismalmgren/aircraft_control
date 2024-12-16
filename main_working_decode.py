@@ -144,7 +144,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     )
     
     decoder_net = MLP(
-        in_features=enc_dim, #+ num_fourier_features * 5 - 5,
+        in_features=latent_dim, #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Mish,
         #activation_kwargs=softmax_activation_kwargs,
         out_features=input_shape[-1],  # predict only loc
@@ -439,7 +439,7 @@ def main(cfg: DictConfig):
         clip_epsilon=cfg.ppo.clip_epsilon,
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
-        normalize_advantage = True,
+        normalize_advantage= True,
         support=support
     )
 
@@ -452,10 +452,10 @@ def main(cfg: DictConfig):
     actor_optim = torch.optim.AdamW(policy_module.parameters(), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     critic_optim = torch.optim.AdamW(value_module.parameters(), lr=cfg.optim.lr_value, eps=cfg.optim.eps)
     consistency_optim = torch.optim.AdamW(list(encoder_module.parameters()) + 
-                                          list(dynamics_module.parameters()) + list(decoder_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
+                                          list(dynamics_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
     
     reward_optim = torch.optim.AdamW(list(reward_module.parameters()), lr=cfg.optim.lr_policy, eps=cfg.optim.eps)
-
+    
 
     collected_frames = 0
     cfg_logger_save_interval = cfg.logger.save_interval
@@ -473,7 +473,6 @@ def main(cfg: DictConfig):
         dynamics_state = loaded_state['model_dynamics']
         encoder_state = loaded_state['model_encoder']
         reward_state = loaded_state['model_reward']
-        decoder_state = loaded_state['model_decoder']
         actor_optim_state = loaded_state['actor_optimizer']
         critic_optim_state = loaded_state['critic_optimizer']
         reward_optim_state = loaded_state['reward_optimizer']
@@ -484,7 +483,6 @@ def main(cfg: DictConfig):
         value_module.load_state_dict(critic_state)
         dynamics_module.load_state_dict(dynamics_state)
         encoder_module.load_state_dict(encoder_state)
-        decoder_module.load_state_dict(decoder_state)
         reward_module.load_state_dict(reward_state)
         actor_optim.load_state_dict(actor_optim_state)
         critic_optim.load_state_dict(critic_optim_state)
@@ -575,13 +573,13 @@ def main(cfg: DictConfig):
                 batch = batch.to(device)
                 loss = loss_module(batch)
                 losses[j, k] = loss.select(
-                    "loss_critic", "loss_entropy", "loss_objective", "loss_consistency", "loss_reward"
+                    "loss_critic", "loss_entropy", "loss_objective", "loss_consistency", "loss_reward", "loss_decoder"
                 ).detach()
                 clip_fraction = loss["clip_fraction"]
 
                 critic_loss = loss["loss_critic"]
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
-                consistency_loss = loss["loss_consistency"] * 20
+                consistency_loss = loss["loss_consistency"] * 20 + loss["loss_decoder"]
                 reward_loss = loss["loss_reward"]
 
                 consistency_optim.zero_grad()
@@ -659,7 +657,6 @@ def main(cfg: DictConfig):
                         'model_critic': value_module.state_dict(),
                         'model_dynamics': dynamics_module.state_dict(),
                         'model_encoder': encoder_module.state_dict(),
-                        'model_decoder': decoder_module.state_dict(),
                         'model_reward': reward_module.state_dict(),
                         'actor_optimizer': actor_optim.state_dict(),
                         'critic_optimizer': critic_optim.state_dict(),

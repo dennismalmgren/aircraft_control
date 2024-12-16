@@ -43,7 +43,7 @@ from torchrl.objectives.value import (
 
 from torchrl.objectives import PPOLoss
 
-class ClipHGaussWorldModelPPOLoss(PPOLoss):
+class ClipHGaussWorldModelDecodePPOLoss(PPOLoss):
     """Clipped PPO H-Gauss loss.
 
     The clipped importance weighted loss is computed as follows:
@@ -157,6 +157,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         actor_network: ProbabilisticTensorDictSequential | None = None,
         critic_network: TensorDictModule | None = None,
         encoder_network: TensorDictModule | None = None,
+        decoder_network: TensorDictModule | None = None,
         dynamics_network: TensorDictModule | None = None,
         reward_network: TensorDictModule | None = None,
         *,
@@ -197,6 +198,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         self.encoder_network = encoder_network
         self.dynamics_network = dynamics_network
         self.reward_network = reward_network
+        self.decoder_network = decoder_network
 
         for p in self.parameters():
             device = p.device
@@ -235,7 +237,7 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
     @property
     def out_keys(self):
         if self._out_keys is None:
-            keys = ["loss_objective", "clip_fraction", "loss_consistency"]
+            keys = ["loss_objective", "clip_fraction", "loss_consistency", "loss_decoder", "loss_reward"]
             if self.entropy_bonus:
                 keys.extend(["entropy", "loss_entropy"])
             if self.loss_critic:
@@ -291,16 +293,19 @@ class ClipHGaussWorldModelPPOLoss(PPOLoss):
         next_step_td = tensordict["next"].select("observation_vector")
         # Add encoding
         self.encoder_network(consistency_td)
+        self.decoder_network(consistency_td)
         self.encoder_network(next_step_td)
         #propagate
         self.dynamics_network(consistency_td)
-        consistency_loss = torch.nn.functional.mse_loss(consistency_td["next_observation_predicted"], next_step_td["observation_encoded"], reduction="none")
-
+        consistency_loss = torch.nn.functional.mse_loss(consistency_td["next_observation_predicted"], next_step_td["observation_encoded"].detach(), reduction="none")
+        decoder_loss = torch.nn.functional.mse_loss(consistency_td["observation_vector_decoded"], consistency_td["observation_vector"], reduction="none")
         #reward loss
         self.reward_network(tensordict)
         reward_loss = torch.nn.functional.mse_loss(tensordict["next_reward_predicted"], tensordict["next", "reward"], reduction="none")
         td_out.set("loss_consistency", consistency_loss)
         td_out.set("loss_reward", reward_loss)
+        #td_out.set("loss_decoder", torch.zeros_like(reward_loss))
+        td_out.set("loss_decoder", decoder_loss)
 
         if self.entropy_bonus:
             entropy = self.get_entropy_bonus(dist)
