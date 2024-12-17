@@ -44,7 +44,7 @@ network:
   vmax: 100
   rmin: -100
   rmax: 1
-  
+
 env:
   max_time_steps_train: 1200
   max_time_steps_eval: 2400

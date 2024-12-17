@@ -161,7 +161,7 @@ class JSBSimControlEnv(EnvBase):
 
         task_reward = torch.zeros(1, dtype=torch.float32, device=self.device)
 
-        alt_error = torch.tensor(simulator_state.position_h_sl_m - self._target_altitude, dtype=torch.float32, device=self.device)
+        alt_error = simulator_state.position_h_sl_m - self._target_altitude 
 
         if self._tolerance_altitude is not None:
             alt_error = torch.max(0, torch.abs(alt_error) - self._tolerance_altitude)

@@ -24,7 +24,8 @@ from torchrl.envs.transforms import (
     StepCounter,
     RewardSum,
     RewardScaling,
-    ClipTransform
+    ClipTransform,
+    ObservationNorm
 )
 from torchrl.envs import (
     ParallelEnv,
@@ -53,6 +54,7 @@ from transforms.episode_sum_transform import EpisodeSum
 from transforms.difference_transform import Difference
 from transforms.angular_difference_transform import AngularDifference
 from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
+from transforms.observation_scaling_transform import ObservationScaling
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgauss_worldmodel_decode_ppo_loss import ClipHGaussWorldModelDecodePPOLoss
@@ -144,7 +146,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     )
     
     decoder_net = MLP(
-        in_features=enc_dim, #+ num_fourier_features * 5 - 5,
+        in_features=latent_dim, #+ num_fourier_features * 5 - 5,
         activation_class=torch.nn.Mish,
         #activation_kwargs=softmax_activation_kwargs,
         out_features=input_shape[-1],  # predict only loc
@@ -334,25 +336,17 @@ def apply_env_transforms(env, cfg, is_train = True):
         Compose(
             InitTracker(),
             StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
-            PlanarAngleCosSin(in_keys=["psi", "theta", "phi"], out_keys=["psi_cossin", "theta_cossin", "phi_cossin"]),
-            Difference(in_keys=["target_alt", "alt", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
-            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
-            AltitudeToScaleCode(in_keys=["alt"], out_keys=["alt_code"], add_cosine=False, base_scale=100.0,num_wavelengths=4 ),
-            CatTensors(in_keys=["altitude_error", "speed_error", "alt_code", "mach", 
-                                "u", "v", "w", "udot", "vdot", "wdot",
-                    "p", "q", "r", "pdot", "qdot", "rdot"],
-            out_key="norm_vector", del_keys=False),
-            VecNorm(in_keys=["norm_vector"], decay=0.99999, eps=1e-2),
-            ClipTransform(in_keys=["norm_vector"], low=-10, high=10),
-            CatTensors(in_keys=["norm_vector", "heading_error", "psi_cossin", "theta_cossin", "phi_cossin"], out_key="observation_vector"),
-#            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            # AltitudeToScaleCode(in_keys=["alt", "target_alt", ], out_keys=["alt_code", "target_alt_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4 ),
-            # AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot", "altitude_error"], 
-            #                     out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code", "altitude_error_code"], 
-            #                                 add_cosine=False, base_scale=10.0,num_wavelengths=4),
-            # AltitudeToScaleCode(in_keys=["speed_error", "mach"], out_keys=["speed_error_code", "mach_code"], add_cosine=False, base_scale=10.0,num_wavelengths=4),
+            Difference(in_keys=["target_alt", "alt", "target_speed", "mach", "target_heading", "psi"], out_keys=["altitude_error", "speed_error", "heading_error"]),
+            ObservationScaling(in_keys=["target_alt", "alt", "u", "v", "w", "udot", "vdot", "wdot",
+                                   "altitude_error"], 
+                          out_keys=["target_alt_scaled", "alt_scaled", "u_scaled", "v_scaled", "w_scaled", "udot_scaled", "vdot_scaled", "wdot_scaled",
+                                    "altitude_error_scaled"],
+                          loc = 0.0, scale=0.001),
+            CatTensors(in_keys=["altitude_error_scaled", "speed_error", "alt_scaled", "mach", 
+                                "psi", "theta", "phi",
+                                "u_scaled", "v_scaled", "w_scaled", "udot_scaled", "vdot_scaled", "wdot_scaled",
+                                "p", "q", "r", "pdot", "qdot", "rdot", "heading_error"], out_key="observation_vector", del_keys=False),
 
-        
             RewardSum(in_keys=reward_keys),
         )
     )
@@ -423,6 +417,8 @@ def main(cfg: DictConfig):
                       #    "id": "k9a2ij6t"
                           },
         )
+    
+
 
     template_env = make_environment(cfg)
 
@@ -534,7 +530,6 @@ def main(cfg: DictConfig):
     losses = TensorDict({}, batch_size=[cfg_loss_ppo_epochs, num_mini_batches])
     norms = TensorDict({}, batch_size=[cfg_loss_ppo_epochs, num_mini_batches])
     for i, data in enumerate(collector):
-
         log_info = {}
         sampling_time = time.time() - sampling_start
         frames_in_batch = data.numel()
@@ -550,14 +545,14 @@ def main(cfg: DictConfig):
                         ].mean().item()
                     }
                 )
-        data = data.select("observation_vector", 
-                           "observation_encoded",
-                           "action", 
-                           "sample_log_prob",
-                           ("next", "reward"), 
-                           ("next", "terminated"), 
-                           ("next","done"), 
-                           ("next", "observation_vector"),)
+        # data = data.select("observation_vector", 
+        #                    "observation_encoded",
+        #                    "action", 
+        #                    "sample_log_prob",
+        #                    ("next", "reward"), 
+        #                    ("next", "terminated"), 
+        #                    ("next","done"), 
+        #                    ("next", "observation_vector"),)
         training_start = time.time()
         for j in range(cfg_loss_ppo_epochs):
             # Compute GAE
