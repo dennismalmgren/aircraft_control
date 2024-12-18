@@ -578,22 +578,24 @@ def main(cfg: DictConfig):
                 actor_loss = loss["loss_objective"] + loss["loss_entropy"]
                 consistency_loss = loss["loss_consistency"] * 20
                 reward_loss = loss["loss_reward"]
+                joint_loss = critic_loss + consistency_loss + reward_loss
 
                 consistency_optim.zero_grad()
                 reward_optim.zero_grad()     
-
-                consistency_loss.backward()
+                critic_optim.zero_grad() #added
+                joint_loss.backward() #added
+#                consistency_loss.backward()
                 consistency_grad_norm = torch.nn.utils.clip_grad_norm_(list(encoder_module.parameters())
                                                                         + list(dynamics_module.parameters()), cfg_max_grad_norm * 2)
                 consistency_optim.step()
 
-                critic_optim.zero_grad()           
-                critic_loss.backward()
+               # critic_optim.zero_grad()           
+              #  critic_loss.backward()
                 critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_module.parameters(), cfg_max_grad_norm)
                 critic_optim.step()
 
-                reward_optim.zero_grad()     
-                reward_loss.backward()
+              #  reward_optim.zero_grad()     
+             #   reward_loss.backward()
                 reward_grad_norm = torch.nn.utils.clip_grad_norm_(list(reward_module.parameters()), cfg_max_grad_norm * 2)
                 reward_optim.step()
 

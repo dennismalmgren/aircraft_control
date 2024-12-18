@@ -289,7 +289,7 @@ class ClipHGaussWorldModelDecodePPOLoss(PPOLoss):
         td_out = TensorDict({"loss_objective": -gain}, batch_size=[])
         td_out.set("clip_fraction", clip_fraction)
         #calculate consistency loss
-        consistency_td = tensordict.select("observation_vector", "action")
+        consistency_td = tensordict#.select("observation_vector", "action")
         next_step_td = tensordict["next"].select("observation_vector")
         # Add encoding
         self.encoder_network(consistency_td)
