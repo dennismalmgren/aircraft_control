@@ -173,6 +173,7 @@ class ClipHGaussWorldModelDecodePPOLoss(PPOLoss):
         reduction: str = None,
         clip_value: bool | float | None = None,
         support: torch.Tensor = None,
+        eta: float | None = None,
         **kwargs,
     ):
         # Define clipping of the value loss
@@ -199,7 +200,7 @@ class ClipHGaussWorldModelDecodePPOLoss(PPOLoss):
         self.dynamics_network = dynamics_network
         self.reward_network = reward_network
         self.decoder_network = decoder_network
-
+        self.eta = eta
         for p in self.parameters():
             device = p.device
             break

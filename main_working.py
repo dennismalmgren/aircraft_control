@@ -436,7 +436,8 @@ def main(cfg: DictConfig):
         loss_critic_type=cfg.ppo.loss_critic_type,
         entropy_coef=cfg.ppo.entropy_coef,
         normalize_advantage = True,
-        support=support
+        support=support,
+        eta = cfg.optim.eta
     )
 
     adv_module = GAE(

@@ -60,3 +60,4 @@ optim:
   anneal_clip_epsilon: false
   eps: 1.0e-4
   cudagraphs: false
+  eta: 0.5
