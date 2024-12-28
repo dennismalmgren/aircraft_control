@@ -517,8 +517,9 @@ def main(cfg: DictConfig):
         done = torch.zeros((n_envs, 1), dtype=torch.bool)
         while not torch.all(done):
             #### Select action
-            dist = actor_module.get_dist(next_step_td_)
-            n_sample_actions = 16
+            next_step_td_ = encoder_module(next_step_td_)
+            dist = learning_actor_module.get_dist(next_step_td_)
+            n_sample_actions = 64
             actions = dist.sample(sample_shape=(n_sample_actions,))
             actions = torch.cat((actions, dist.deterministic_sample.unsqueeze(0)), dim=0)
             n_final_actions = actions.shape[0]
@@ -529,13 +530,39 @@ def main(cfg: DictConfig):
             plan_td["action"] = actions
             plan_td = reward_module(plan_td)
             plan_td = dynamics_module(plan_td)
-            plan_td_value = plan_td.select("next_observation_encoded_predicted")
-            plan_td_value["observation_encoded"] = plan_td_value["next_observation_encoded_predicted"]
-            plan_td_value = value_module(plan_td_value)
+            plan_td_next = plan_td.select("next_observation_encoded_predicted", "next_reward_predicted")
+            plan_td_next.rename_key_("next_observation_encoded_predicted", "observation_encoded")
+            plan_td_next.rename_key_("next_reward_predicted", "reward")
+            
+            plan_td_next = value_module(plan_td_next)
+            
             #ignore terminals now)
-            q_vals = plan_td["next_reward_predicted"] + 0.99 * plan_td_value["state_value"]# - next_step_td_["state_value"].unsqueeze(-2)
+            q_vals = plan_td_next["reward"] + 0.5 * plan_td_next["state_value"]# - next_step_td_["state_value"].unsqueeze(-2)
             res = 0.01 * q_vals + p_actions
-            action_indices = torch.argmax(res, dim=1)
+            top_action_indices = torch.topk(res, n_sample_actions//2, dim=1).indices
+            plan_td_next = plan_td_next.gather(dim=1, index=top_action_indices.squeeze(-1))
+            dist_next = learning_actor_module.get_dist(plan_td_next)
+            next_actions = dist_next.sample(sample_shape=(n_sample_actions//2,))
+            next_actions = torch.cat((next_actions, dist_next.deterministic_sample.unsqueeze(0)), dim=0)
+            #for each of the 8 old_actions we have 9 new_actions.
+            #this gives 9 x 2 x 8 x 4 (a-dim last)
+            #reshape to 2 x 9 x 8 x 2 x 4
+            p_actions = dist_next.log_prob(next_actions).unsqueeze(-1)
+            next_actions = next_actions.permute(1, 2, 0, 3)
+            p_actions = p_actions.permute(1, 2, 0, 3)
+            plan_td_next = plan_td_next.select("observation_encoded", "reward").unsqueeze(-1).expand(n_envs, n_sample_actions//2, n_sample_actions//2 + 1)
+            plan_td_next["action"] = next_actions
+            plan_td_next = reward_module(plan_td_next)
+            plan_td_next = dynamics_module(plan_td_next)
+            plan_td_next_next = plan_td_next.select("next_observation_encoded_predicted", "next_reward_predicted")
+            plan_td_next_next.rename_key_("next_observation_encoded_predicted", "observation_encoded")
+            plan_td_next_next.rename_key_("next_reward_predicted", "reward")
+            plan_td_next_next = value_module(plan_td_next_next)
+            q_vals = plan_td_next["reward"] + 0.5 * (plan_td_next_next["reward"] + 0.5 * plan_td_next_next["state_value"])
+            res = 0.01 * q_vals + p_actions
+            res = torch.max(res, dim=-2)[0]
+            next_action_indices = torch.argmax(res, dim=1)
+            action_indices = torch.gather(top_action_indices.squeeze(-1), dim=1, index=next_action_indices)
             action_td = torch.gather(plan_td, dim=1, index=action_indices)
             actions = action_td["action"][:, 0]
             next_step_td_["action"] = actions
