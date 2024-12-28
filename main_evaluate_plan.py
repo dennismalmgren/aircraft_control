@@ -108,8 +108,8 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     num_outputs = action_spec.shape[-1]
     distribution_class = TanhNormal
     distribution_kwargs = {
-        "low": action_spec.space.low,
-        "high": action_spec.space.high,
+        "min": action_spec.space.low,
+        "max": action_spec.space.high,
         "tanh_loc": False,
        # 'safe_tanh': False
     }
@@ -321,7 +321,7 @@ def apply_env_transforms(env):
                     "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
             out_key="observation_vector", del_keys=False),        
             #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
-            RewardSum(in_keys=["reward", "reward_task", "reward_smoothness"]),
+            RewardSum(in_keys=["reward", "task_reward", "smoothness_reward"]),
             EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
         )
     )
@@ -372,7 +372,7 @@ def main(cfg: DictConfig):
     load_model = True
     if load_model:
         model_dir="2024-12-07/00-16-59/"
-        model_name = "training_snapshot_63040000"
+        model_name = "training_snapshot_62040000"
         loaded_state = load_model_state(model_name, model_dir)
         actor_state = loaded_state['model_actor']
         critic_state = loaded_state['model_critic']
@@ -442,96 +442,54 @@ def main(cfg: DictConfig):
     world_model = PredictiveWorldModelWrapper(dynamics_module, reward_module)
 
     start_time = time.time()
-    num_envs = cfg.collector.env_per_collector = 30
-    conf_env = make_raw_environment()
-    ic = [{"aircraft_ic": conf_env.curriculum_manager.get_initial_conditions()} for _ in range(num_envs)]
+    num_episodes = 5
+    num_candidates = 512
+    cfg.collector.env_per_collector = num_episodes
+    mb_env = ModelBasedEnv(world_model, batch_size=None)
+
+
+    adv = TDLambdaEstimator(
+        gamma=0.995,
+        lmbda=0.95,
+        value_network=value_module,
+    )
+
+    # Build a planner and use it as actor
+    planner = MPPIPlanner(
+        mb_env,
+        adv,
+        temperature=0.5,
+        planning_horizon=1,
+        optim_steps=11,
+        num_candidates=num_candidates,
+        top_k=24)
+    encoder_planner = TensorDictSequential(
+        encoder_module,
+        planner
+    )
 
     envs = env_maker(cfg)
     print("Evaluating episodes")
     policy_module.eval()
     #3 minute flight = 3 * 60 = 180 seconds = 180 * 60 = 10800 time steps 
-    episode_tds = []
-    with set_interaction_type(InteractionType.DETERMINISTIC) and torch.no_grad():
-        next_step_td_ = envs.reset(list_of_kwargs=ic)
-        done = torch.zeros((num_envs, 1), dtype=torch.bool)
-        while not torch.all(done):
-            next_step_td_ = actor_module(next_step_td_)
-            next_step_td, next_step_td_ = envs.step_and_maybe_reset(next_step_td_)
-            done = done | next_step_td["next", "done"]
-            episode_tds.append(next_step_td)
-        episodes = torch.stack(episode_tds, dim=-1)
+    with set_interaction_type(InteractionType.DETERMINISTIC):
+        episodes = envs.rollout(max_steps = 2000, policy=actor_module, break_when_any_done=False)
+    #assert torch.sum(episodes['next', 'done']).item() == num_episodes, "Too many episodes"
     done_indices = episodes["next", "done"][..., 0].unsqueeze(-1)
     episode_rewards = episodes["next", "episode_reward"][done_indices]
-    episode_smoothness_rewards = episodes["next", "episode_reward_smoothness"][done_indices]
-    episode_task_rewards = episodes["next", "episode_reward_task"][done_indices]
+    episode_smoothness_rewards = episodes["next", "episode_smoothness_reward"][done_indices]
+    episode_task_rewards = episodes["next", "episode_task_reward"][done_indices]
    
-    print("Evaluation results (deterministic)")
+    print("Evaluation results (raw)")
     print("Average episode reward: ", episode_rewards.mean())
     print("Average episode task reward: ", episode_task_rewards.mean())
     print("Average episode smoothness reward: ", episode_smoothness_rewards.mean())
 
 
-    with set_interaction_type(InteractionType.RANDOM) and torch.no_grad():
-        next_step_td_ = envs.reset(list_of_kwargs=ic)
-        done = torch.zeros((num_envs, 1), dtype=torch.bool)
-        while not torch.all(done):
-            next_step_td_ = actor_module(next_step_td_)
-            next_step_td, next_step_td_ = envs.step_and_maybe_reset(next_step_td_)
-            done = done | next_step_td["next", "done"]
-            episode_tds.append(next_step_td)
-        episodes = torch.stack(episode_tds, dim=-1)
-    done_indices = episodes["next", "done"][..., 0].unsqueeze(-1)
-    episode_rewards = episodes["next", "episode_reward"][done_indices]
-    episode_smoothness_rewards = episodes["next", "episode_reward_smoothness"][done_indices]
-    episode_task_rewards = episodes["next", "episode_reward_task"][done_indices]
-   
-    print("Evaluation results (random)")
-    print("Average episode reward: ", episode_rewards.mean())
-    print("Average episode task reward: ", episode_task_rewards.mean())
-    print("Average episode smoothness reward: ", episode_smoothness_rewards.mean())
+    for i, episode in enumerate(episodes.unbind(0)):
+        log_trajectory(episode, "A0100", "trajectory_log_raw_" + str(i))
 
-#    for i, episode in enumerate(episodes.unbind(0)):
-#        log_trajectory(episode, "A0100", "trajectory_log_raw_" + str(i))
-    n_envs = envs.batch_size[0]
-    with torch.no_grad():
-        episode_td = []
-        next_step_td_ = envs.reset(list_of_kwargs=ic)
-        done = torch.zeros((n_envs, 1), dtype=torch.bool)
-        while not torch.all(done):
-            dist = actor_module.get_dist(next_step_td_)
-            next_step_td_ = value_module(next_step_td_)
-            n_sample_actions = 16
-            actions = dist.sample(sample_shape=(n_sample_actions,))
-            actions = torch.cat((actions, dist.deterministic_sample.unsqueeze(0)), dim=0)
-            n_final_actions = actions.shape[0]
-            p_actions = dist.log_prob(actions).unsqueeze(-1)
-            actions = actions.permute(1, 0, 2)
-            p_actions = p_actions.permute(1, 0, 2)
-            plan_td = next_step_td_.select("observation_encoded").unsqueeze(-1).expand(n_envs, n_final_actions)
-            plan_td["action"] = actions
-            plan_td = reward_module(plan_td)
-            plan_td = dynamics_module(plan_td)
-            plan_td = value_module(plan_td)
-            #ignore terminals now)
-            q_vals = plan_td["reward"] + 0.99 * plan_td["state_value"]# - next_step_td_["state_value"].unsqueeze(-2)
-            res = 5 * 0.0025 * q_vals + p_actions
-            action_indices = torch.argmax(res, dim=1)
-            action_td = torch.gather(plan_td, dim=1, index=action_indices)
-            actions = action_td["action"][:, 0]
-            next_step_td_["action"] = actions
-            next_step_td, next_step_td_ = envs.step_and_maybe_reset(next_step_td_)
-            done = done | next_step_td["next", "done"]
-            episode_td.append(next_step_td)
-    episodes = torch.stack(episode_td, dim=-1)
-    done_indices = episodes["next", "done"][..., 0].unsqueeze(-1)
-    episode_rewards = episodes["next", "episode_reward"][done_indices]
-    episode_smoothness_rewards = episodes["next", "episode_reward_smoothness"][done_indices]
-    episode_task_rewards = episodes["next", "episode_reward_task"][done_indices]
-    print("Evaluation results (planner)")
-    print("Average episode reward: ", episode_rewards.mean())
-    print("Average episode task reward: ", episode_task_rewards.mean())
-    print("Average episode smoothness reward: ", episode_smoothness_rewards.mean())
-    print('ok')
+    # print("Evaluating episodes planned")
     # with set_interaction_type(InteractionType.DETERMINISTIC):
     #     episodes = envs.rollout(max_steps = 2000, policy=encoder_planner, break_when_any_done=False)
     # done_indices = episodes["next", "done"][..., 0].unsqueeze(-1)
@@ -544,8 +502,8 @@ def main(cfg: DictConfig):
     # print("Average episode task reward (with planner): ", episode_task_rewards.mean())
     # print("Average episode smoothness reward (with planner): ", episode_smoothness_rewards.mean())
 
-#    for i, episode in enumerate(episodes.unbind(0)):
-#        log_trajectory(episode, "A0100", "trajectory_log_planned_" + str(i))
+    for i, episode in enumerate(episodes.unbind(0)):
+        log_trajectory(episode, "A0100", "trajectory_log_planned_" + str(i))
 
     end_time = time.time()
 

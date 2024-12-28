@@ -514,7 +514,7 @@ def main(cfg: DictConfig):
             plan_td = value_module(plan_td)
             #ignore terminals now)
             q_vals = plan_td["reward"] + 0.99 * plan_td["state_value"]# - next_step_td_["state_value"].unsqueeze(-2)
-            res = 5 * 0.0025 * q_vals + p_actions
+            res = 10 * q_vals + p_actions
             action_indices = torch.argmax(res, dim=1)
             action_td = torch.gather(plan_td, dim=1, index=action_indices)
             actions = action_td["action"][:, 0]
