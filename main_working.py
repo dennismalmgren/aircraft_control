@@ -225,16 +225,16 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         ),
     )
 
-    decoder_module = TensorDictModule(
-        module=decoder_net,
-        in_keys=["observation_encoded"],
-        out_keys=["observation_vector_decoded"]
-    )
-
     encoder_module = TensorDictModule(
         module=encoder_net,
         in_keys=["observation_vector"],
         out_keys=["observation_encoded"]
+    )
+
+    decoder_module = TensorDictModule(
+        module=decoder_net,
+        in_keys=["observation_encoded"],
+        out_keys=["observation_vector_decoded"]
     )
 
     dynamics_module = TensorDictModule(

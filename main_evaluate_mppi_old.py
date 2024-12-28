@@ -55,6 +55,7 @@ from transforms.episode_sum_transform import EpisodeSum
 from transforms.difference_transform import Difference
 from transforms.angular_difference_transform import AngularDifference
 from transforms.planar_angle_cos_sin_transform import PlanarAngleCosSin
+from transforms.observation_scaling_transform import ObservationScaling
 
 from hgauss.support_operator import SupportOperator
 from hgauss.objectives.cliphgaussppo_loss import ClipHGaussPPOLoss
@@ -136,6 +137,18 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
                     "normalized_shape": hidden_size} for hidden_size in [enc_dim, latent_dim, latent_dim]],
     )
 
+    decoder_net = MLP(
+        in_features=latent_dim, #+ num_fourier_features * 5 - 5,
+        activation_class=torch.nn.Mish,
+        #activation_kwargs=softmax_activation_kwargs,
+        out_features=input_shape[-1],  # predict only loc
+        num_cells=[latent_dim, latent_dim],
+        activate_last_layer=False,
+        norm_class=torch.nn.LayerNorm,
+        norm_kwargs=[{"elementwise_affine": False,
+                    "normalized_shape": hidden_size} for hidden_size in [latent_dim, latent_dim]],    
+    )
+
     dynamics_net = MLP(
         in_features=latent_dim + num_outputs,
         activation_class=SoftmaxLayer,
@@ -176,6 +189,11 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
             torch.nn.init.orthogonal_(layer.weight, 0.7)
             layer.bias.data.zero_()
 
+    for layer in decoder_net.modules():
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.orthogonal_(layer.weight, 0.7)
+            layer.bias.data.zero_()
+
     for layer in dynamics_net.modules():
         if isinstance(layer, torch.nn.Linear):
             torch.nn.init.orthogonal_(layer.weight, 0.7)
@@ -203,6 +221,12 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         module=encoder_net,
         in_keys=["observation_vector"],
         out_keys=["observation_encoded"]
+    )
+
+    decoder_module = TensorDictModule(
+        module=decoder_net,
+        in_keys=["observation_encoded"],
+        out_keys=["observation_vector_decoded"]
     )
 
     dynamics_module = TensorDictModule(
@@ -236,7 +260,7 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         default_interaction_type=InteractionType.RANDOM,
     )
 
-    learning_actor_module = ProbabilisticActor(
+    latent_actor_module = ProbabilisticActor(
         module=policy_module,
         in_keys=["loc", "scale"],
         spec=Composite(action=action_spec),
@@ -260,8 +284,9 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
         activation_class=torch.nn.Mish,
         out_features=nbins,  
         num_cells=[value_dim, value_dim],
+        norm_class=torch.nn.LayerNorm,
         norm_kwargs=[{"elementwise_affine": False,
-                    "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim]],
+                    "normalized_shape": hidden_size} for hidden_size in [value_dim, value_dim, value_dim]],
     )
 
     for layer in value_net.modules():
@@ -282,54 +307,45 @@ def make_models(cfg, observation_spec: TensorSpec, action_spec: TensorSpec, devi
     value_module = value_module.to(device)
     support = support.to(device)
     encoder_module = encoder_module.to(device)
+    decoder_module = decoder_module.to(device)
     dynamics_module = dynamics_module.to(device)
     reward_module = reward_module.to(device)
     policy_module = policy_module.to(device)
-    learning_actor_module = learning_actor_module.to(device)
+    latent_actor_module = latent_actor_module.to(device)
 
-    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module
+    return actor_module, value_module, support, encoder_module, dynamics_module, policy_module, latent_actor_module, reward_module, decoder_module
 
 
 def make_raw_environment():
     env = JSBSimControlEnv()
     return env
 
-def apply_env_transforms(env):
+def apply_env_transforms(env, cfg, is_train = False):
+    reward_keys = list(env.reward_spec.keys())
     env = TransformedEnv(
         env,
         Compose(
             InitTracker(),
-            StepCounter(max_steps=2000),
-            TimeMinPool(in_keys="mach", out_keys="episode_min_mach", T=2000),
-            TimeMaxPool(in_keys="mach", out_keys="episode_max_mach", T=2000),
-            RewardScaling(loc=0.0, scale=0.01, in_keys=["u", "v", "w", "udot", "vdot", "wdot"]),
-            #Lets try 3d-encoding later
-            #AltitudeToScaleCode(in_keys=["u", "v", "w", "udot", "vdot", "wdot"], 
-            #                    out_keys=["u_code", "v_code", "w_code", "udot_code", "vdot_code", "wdot_code"], 
-            #                                add_cosine=True, num_wavelengths=11),
-            EulerToRotation(in_keys=["psi", "theta", "phi"], out_keys=["rotation"]),
-            AltitudeToScaleCode(in_keys=["alt", "target_alt"], out_keys=["alt_code", "target_alt_code"], add_cosine=False),
-            Difference(in_keys=["target_alt_code", "alt_code", "target_speed", "mach"], out_keys=["altitude_error", "speed_error"]),
-            PlanarAngleCosSin(in_keys=["psi"], out_keys=["psi_cos_sin"]),
-            AngularDifference(in_keys=["target_heading", "psi"], out_keys=["heading_error"]),                        
+            StepCounter(max_steps=cfg.env.max_time_steps_train if is_train else cfg.env.max_time_steps_eval),
+            Difference(in_keys=["target_alt", "alt", "target_speed", "mach", "target_heading", "psi"], out_keys=["altitude_error", "speed_error", "heading_error"]),
+            ObservationScaling(in_keys=["target_alt", "alt", "u", "v", "w", "udot", "vdot", "wdot",
+                                   "altitude_error"], 
+                          out_keys=["target_alt_scaled", "alt_scaled", "u_scaled", "v_scaled", "w_scaled", "udot_scaled", "vdot_scaled", "wdot_scaled",
+                                    "altitude_error_scaled"],
+                          loc = 0.0, scale=0.001),
+            CatTensors(in_keys=["altitude_error_scaled", "speed_error", "alt_scaled", "mach", 
+                                "psi", "theta", "phi",
+                                "u_scaled", "v_scaled", "w_scaled", "udot_scaled", "vdot_scaled", "wdot_scaled",
+                                "p", "q", "r", "pdot", "qdot", "rdot", "heading_error"], out_key="observation_vector", del_keys=False),
 
-            #CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", "u", "v", "w", "udot", "vdot", "wdot",
-            #                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
-            #                        out_key="observation_vector", del_keys=False),    
-            CatTensors(in_keys=["altitude_error", "speed_error", "heading_error", "alt_code", "mach", "psi_cos_sin", "rotation", 
-                                "u", "v", "w", "udot", "vdot", "wdot",
-                    "p", "q", "r", "pdot", "qdot", "rdot", "last_action"],
-            out_key="observation_vector", del_keys=False),        
-            #CatFrames(N=60, dim=-1, in_keys=["observation_vector"]),
-            RewardSum(in_keys=["reward", "reward_task", "reward_smoothness"]),
-            EpisodeSum(in_keys=["pdot", "p", "qdot", "q", "rdot", "r"])
+            RewardSum(in_keys=reward_keys),
         )
     )
     return env
 
-def make_environment():
+def make_environment(cfg, is_train=False):
     env = make_raw_environment()
-    env = apply_env_transforms(env)
+    env = apply_env_transforms(env, cfg, is_train)
     return env
 
 def env_maker(cfg):
@@ -337,7 +353,7 @@ def env_maker(cfg):
         cfg.collector.env_per_collector,
         EnvCreator(lambda cfg=cfg: make_raw_environment()),
     )
-    parallel_env = apply_env_transforms(parallel_env)
+    parallel_env = apply_env_transforms(parallel_env, cfg, is_train=False)
     return parallel_env
 
 def load_model_state(model_name, run_folder_name=""):
@@ -365,24 +381,26 @@ def main(cfg: DictConfig):
     os.mkdir("ac_logging")
 
 
-    template_env = make_environment()
-    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module = \
+    template_env = make_environment(cfg)
+    actor_module, value_module, support, encoder_module, dynamics_module, policy_module, learning_actor_module, reward_module, decoder_module = \
         make_models(cfg, template_env.observation_spec["observation_vector"], template_env.action_spec, device)
     
     load_model = True
     if load_model:
-        model_dir="2024-12-07/00-16-59/"
-        model_name = "training_snapshot_63040000"
+        model_dir="2024-12-18/00-54-01/"
+        model_name = "training_snapshot_36040000"
         loaded_state = load_model_state(model_name, model_dir)
         actor_state = loaded_state['model_actor']
         critic_state = loaded_state['model_critic']
         dynamics_state = loaded_state['model_dynamics']
         encoder_state = loaded_state["model_encoder"]
+        decoder_state = loaded_state["model_decoder"]
         reward_state = loaded_state["model_reward"]
         policy_module.load_state_dict(actor_state)
         value_module.load_state_dict(critic_state)
         dynamics_module.load_state_dict(dynamics_state)
         encoder_module.load_state_dict(encoder_state)
+        decoder_module.load_state_dict(decoder_state)
         reward_module.load_state_dict(reward_state)
 
         class PredictiveWorldModelWrapper(TensorDictSequential):
@@ -514,7 +532,7 @@ def main(cfg: DictConfig):
             plan_td = value_module(plan_td)
             #ignore terminals now)
             q_vals = plan_td["reward"] + 0.99 * plan_td["state_value"]# - next_step_td_["state_value"].unsqueeze(-2)
-            res = 10 * q_vals + p_actions
+            res = 0.01 * q_vals + p_actions
             action_indices = torch.argmax(res, dim=1)
             action_td = torch.gather(plan_td, dim=1, index=action_indices)
             actions = action_td["action"][:, 0]
